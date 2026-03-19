@@ -1,28 +1,21 @@
 """
-Telegram API routes.
+Telegram API routes — multi-step conversation engine.
 
-Endpoints:
-    POST /api/telegram/connect     — generate verification code (paid plans only)
-    POST /api/telegram/disconnect  — unlink account
-    GET  /api/telegram/status      — connection status (any auth'd user)
-    POST /api/telegram/webhook     — receive updates from Telegram Bot API
-    POST /api/telegram/test        — send test message to connected chat
+Bot conversation states per chat_id (in-memory):
+    wait_subject  — asked for subject, waiting for reply
+    wait_body     — asked for body, waiting for reply
+    wait_confirm  — showing email preview, waiting for YES/NO
 
-Bot commands handled in webhook:
-    /start [USER_ID]  — auto-link account (one-click deeplink flow)
-    /briefing         — full morning briefing
-    /tasks            — priority items
-    /automations      — list active automations
-    /automation add/pause/run — manage automations
-    /status           — account & connection info
-    /help             — help text with NL examples
-    <any other text>  — natural language command (same AI as dashboard)
+NL flow: any non-slash message → AI command engine (same as dashboard).
+Gmail Send goes through: to → subject → body → preview → YES/NO → send.
 """
 import asyncio
 import functools
 import logging
 import os
+import re
 from datetime import datetime, timezone as tz
+from email.utils import parsedate_to_datetime
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -38,12 +31,10 @@ from services.telegram import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
-# Plans that get full Telegram features
-PAID_PLANS = {"pro", "team", "trialing", "pro_trial"}
-
-# In-memory pending Gmail send confirmations, keyed by chat_id.
-# Stores {intent, user_id} until the user replies YES/NO.
-_pending_sends: dict = {}
+# ── Per-chat conversation state ──────────────────────────────────────────────
+# chat_id → {"state": str, "intent": dict, "user_id": str}
+# state values: "wait_subject" | "wait_body" | "wait_confirm"
+_conv: dict = {}
 
 
 # ── Supabase helpers ────────────────────────────────────────────────────────
@@ -95,27 +86,11 @@ async def _get_profile(user_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
-async def _require_paid(request: Request):
-    """Authenticate and enforce a paid plan (pro/team/trialing/pro_trial)."""
-    user    = await _require_auth(request)
-    profile = await _get_profile(user["id"])
-    if not profile:
-        raise HTTPException(status_code=404, detail="User profile not found")
-    plan = (profile.get("plan") or "free").lower()
-    if plan not in PAID_PLANS:
-        raise HTTPException(
-            status_code=403,
-            detail="Telegram delivery requires a Pro or Team plan. Upgrade to continue.",
-        )
-    return user, profile
-
-
 async def _get_connection(user_id: str) -> dict | None:
     supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     url = (
         f"{supabase_url}/rest/v1/telegram_connections"
-        f"?user_id=eq.{user_id}"
-        f"&select=*"
+        f"?user_id=eq.{user_id}&select=*"
     )
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url, headers=_sb_headers())
@@ -124,10 +99,8 @@ async def _get_connection(user_id: str) -> dict | None:
 
 
 async def _set_connection(user_id: str, patch: dict):
-    """Insert or update the telegram_connections row for user_id."""
     supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     existing     = await _get_connection(user_id)
-
     if existing:
         url     = f"{supabase_url}/rest/v1/telegram_connections?user_id=eq.{user_id}"
         headers = {**_sb_headers(True), "Prefer": "return=minimal"}
@@ -148,7 +121,6 @@ async def _delete_connection(user_id: str):
 
 
 async def _get_automations(user_id: str) -> list:
-    """Fetch user's automations/rules from Supabase."""
     supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     url = (
         f"{supabase_url}/rest/v1/rules"
@@ -166,29 +138,91 @@ async def _get_automations(user_id: str) -> list:
     return []
 
 
-# ── Result formatting for Telegram HTML ─────────────────────────────────────
+# ── Text/formatting helpers ──────────────────────────────────────────────────
+
+def _fmt_date(date_str: str) -> str:
+    """Parse RFC 2822 or ISO date to a short readable string."""
+    if not date_str:
+        return ""
+    try:
+        dt = parsedate_to_datetime(date_str)
+        return dt.strftime("%b %d, %I:%M %p")
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(date_str[:19])
+        return dt.strftime("%b %d, %I:%M %p")
+    except Exception:
+        return date_str[:20]
+
+
+def _extract_sender(raw_from: str) -> str:
+    """Extract display name from 'Name <email@x.com>' or return email."""
+    if not raw_from:
+        return "Unknown"
+    m = re.match(r'^"?([^"<]+?)"?\s*<[^>]+>$', raw_from.strip())
+    return m.group(1).strip() if m else raw_from.split("<")[0].strip() or raw_from
+
+
+async def _send_long(chat_id: str, text: str, chunk_size: int = 4000):
+    """Send a long message by splitting it into ≤chunk_size pieces at line boundaries."""
+    if len(text) <= chunk_size:
+        await send_message(chat_id, text)
+        return
+    lines, current = text.split("\n"), ""
+    for line in lines:
+        candidate = (current + "\n" + line) if current else line
+        if len(candidate) > chunk_size:
+            if current.strip():
+                await send_message(chat_id, current)
+            current = line
+        else:
+            current = candidate
+    if current.strip():
+        await send_message(chat_id, current)
+
+
+# ── Result formatters ────────────────────────────────────────────────────────
+
+def _format_email_list(messages: list) -> str:
+    """
+    Format ALL emails with full From / Subject / Date / Body preview.
+    Caller should use _send_long() since this can exceed 4096 chars.
+    """
+    if not messages:
+        return "📭 No emails found."
+
+    header = f"📧 <b>{len(messages)} email{'s' if len(messages) != 1 else ''} found</b>\n\n"
+    body   = ""
+
+    for m in messages:
+        sender  = _extract_sender(m.get("from", "Unknown"))
+        subject = m.get("subject") or "(No Subject)"
+        date    = _fmt_date(m.get("date", ""))
+        # Prefer parsed body for richer preview; fall back to snippet
+        preview = (m.get("body") or m.get("snippet") or "").strip()
+        if len(preview) > 250:
+            # Cut at last space to avoid mid-word truncation
+            preview = preview[:250].rsplit(" ", 1)[0] + "…"
+
+        entry  = f"<b>📧 From:</b> {sender}\n"
+        entry += f"<b>Subject:</b> {subject}\n"
+        if date:
+            entry += f"<b>Date:</b> {date}\n"
+        if preview:
+            entry += f"<b>Preview:</b> {preview}\n"
+        entry += "─" * 28 + "\n\n"
+        body  += entry
+
+    return header + body
+
 
 def _format_nl_result(result: dict) -> str:
-    """Convert a command_executor result dict to a readable Telegram HTML string."""
+    """Convert a command_executor result dict to readable Telegram HTML."""
     t = result.get("type", "")
 
     if t == "gmail_search":
-        msgs = result.get("messages", [])
-        if not msgs:
-            return "📭 No emails found."
-        lines = [f"<b>📧 {len(msgs)} email{'s' if len(msgs) != 1 else ''} found</b>"]
-        for m in msgs[:5]:
-            raw_from = m.get("from", "Unknown")
-            # Extract display name from "Name <email>" format
-            sender = raw_from.split("<")[0].strip().strip('"') or raw_from
-            subject = m.get("subject") or "(No Subject)"
-            snippet = (m.get("snippet") or "")[:120]
-            lines.append(f"\n<b>{sender}</b> — {subject}")
-            if snippet:
-                lines.append(f"<i>{snippet}…</i>")
-        if len(msgs) > 5:
-            lines.append(f"\n… and {len(msgs) - 5} more.")
-        return "\n".join(lines)
+        return _format_email_list(result.get("messages", []))
 
     if t == "gmail_send":
         return f"✅ Email sent to <b>{result.get('to', 'recipient')}</b>"
@@ -202,10 +236,14 @@ def _format_nl_result(result: dict) -> str:
         if not events:
             return "📅 No upcoming events found."
         lines = [f"<b>📅 {len(events)} event{'s' if len(events) != 1 else ''}</b>"]
-        for e in events[:5]:
+        for e in events[:10]:
             start = (e.get("start") or "")[:16].replace("T", " ")
             title = e.get("title") or "Event"
-            lines.append(f"\n<b>{title}</b>\n{start}")
+            attendees = e.get("attendees") or []
+            entry = f"\n<b>{title}</b>\n{start}"
+            if attendees:
+                entry += f"\nWith: {', '.join(attendees[:3])}"
+            lines.append(entry)
         return "\n".join(lines)
 
     if t == "calendar_create":
@@ -222,9 +260,9 @@ def _format_nl_result(result: dict) -> str:
         if not files:
             return "📁 No files found."
         lines = [f"<b>📁 {len(files)} file{'s' if len(files) != 1 else ''} found</b>"]
-        for f in files[:5]:
-            name = f.get("name") or "File"
-            link = f.get("link", "")
+        for f in files[:10]:
+            name  = f.get("name") or "File"
+            link  = f.get("link", "")
             ftype = f.get("type", "")
             entry = f'<a href="{link}">{name}</a>' if link else name
             if ftype:
@@ -233,18 +271,119 @@ def _format_nl_result(result: dict) -> str:
         return "\n".join(lines)
 
     if t == "error":
-        return f"⚠️ {result.get('error', 'Something went wrong.')}"
+        return f"❌ {result.get('error', 'Something went wrong.')}"
 
     return "✅ Done."
 
 
-# ── Natural language command handler ────────────────────────────────────────
+# ── Email send multi-step helpers ────────────────────────────────────────────
+
+def _get_body(params: dict) -> str:
+    return (
+        params.get("body") or params.get("message") or params.get("content") or ""
+    ).strip()
+
+
+async def _advance_email_send(chat_id: str, intent: dict, user_id: str):
+    """
+    Step through the email compose flow:
+      missing subject  → ask for subject  (wait_subject)
+      missing body     → ask for body     (wait_body)
+      both present     → show full preview (wait_confirm)
+    """
+    params  = intent.setdefault("parameters", {})
+    to      = (params.get("to") or "").strip()
+    subject = (params.get("subject") or "").strip()
+    body    = _get_body(params)
+
+    # Normalise params so execute_command sees consistent keys
+    params["body"]    = body
+    params["subject"] = subject
+
+    if not to:
+        _conv.pop(chat_id, None)
+        await send_message(chat_id, "📧 Who should I send this to? (Enter an email address)")
+        return
+
+    if not subject:
+        _conv[chat_id] = {"state": "wait_subject", "intent": intent, "user_id": user_id}
+        await send_message(chat_id, "📝 What should the <b>subject line</b> be?")
+        return
+
+    if not body:
+        _conv[chat_id] = {"state": "wait_body", "intent": intent, "user_id": user_id}
+        await send_message(chat_id, "✏️ What should the <b>email body</b> say?")
+        return
+
+    await _show_email_preview(chat_id, intent, user_id)
+
+
+async def _show_email_preview(chat_id: str, intent: dict, user_id: str):
+    params  = intent.get("parameters", {})
+    to      = params.get("to", "?")
+    subject = params.get("subject") or "(No Subject)"
+    body    = _get_body(params)
+
+    body_preview = body[:500] + ("…" if len(body) > 500 else "")
+    preview = (
+        f"📧 <b>Ready to send email</b>\n\n"
+        f"<b>To:</b> {to}\n"
+        f"<b>Subject:</b> {subject}\n"
+        f"<b>Body:</b>\n{body_preview}\n\n"
+        "Reply <b>YES</b> to send or <b>NO</b> to cancel."
+    )
+    _conv[chat_id] = {"state": "wait_confirm", "intent": intent, "user_id": user_id}
+    await send_message(chat_id, preview)
+
+
+async def _execute_email_send(chat_id: str, intent: dict,
+                               access_token: str, refresh_token: str | None):
+    """Call execute_command for a Gmail send and report the result."""
+    from command_executor import execute_command
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(execute_command, intent, access_token, refresh_token),
+        )
+        logger.info("[Telegram] Email send result for chat_id=%s: %s", chat_id, result)
+
+        if isinstance(result, dict):
+            if result.get("type") == "error":
+                await send_message(chat_id, f"❌ Email failed: {result.get('error', 'unknown error')}")
+                return
+            if result.get("type") == "needs_disambiguation":
+                kind       = result.get("kind", "item")
+                candidates = result.get("candidates") or []
+                lines      = [f"🔍 <b>Multiple {kind}s found — which one?</b>"]
+                for c in candidates[:5]:
+                    if kind == "recipient":
+                        lines.append(f"• {c.get('display_name', '')} &lt;{c.get('email', '')}&gt;")
+                    else:
+                        lines.append(f"• {c.get('name', '')} <i>({c.get('type', '')})</i>")
+                lines.append("\nPlease re-send using the exact email address.")
+                await send_message(chat_id, "\n".join(lines))
+                return
+            if result.get("sent") or result.get("type") == "gmail_send":
+                to = result.get("to") or intent.get("parameters", {}).get("to", "recipient")
+                await send_message(chat_id, f"✅ Email sent to <b>{to}</b>")
+                return
+
+        await send_message(chat_id, _format_nl_result(result))
+
+    except Exception as e:
+        logger.exception("[Telegram] Email send failed for chat_id=%s", chat_id)
+        await send_message(chat_id, f"❌ Email failed: {str(e)[:300]}")
+
+
+# ── NL command handler ────────────────────────────────────────────────────────
 
 async def _handle_nl_command(chat_id: str, text: str, user_id: str,
                               access_token: str, refresh_token: str | None):
     """
-    Parse and execute a natural language command, exactly like the dashboard
-    Command Bar. For Gmail Send, shows a preview and asks for confirmation.
+    Parse and execute a natural language command via the AI engine.
+    Gmail Send → multi-step compose flow.
+    Everything else → execute immediately and return formatted result.
     """
     from ai_engine import parse_command_intent
     from command_executor import execute_command
@@ -254,7 +393,7 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
     try:
         intent = await parse_command_intent(text)
     except Exception:
-        logger.exception("[Telegram] Intent parsing failed")
+        logger.exception("[Telegram] Intent parsing failed for chat_id=%s", chat_id)
         await send_message(chat_id, "⚠️ AI service unavailable. Please try again.")
         return
 
@@ -264,35 +403,24 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
 
     service = (intent.get("service") or "").lower()
     action  = (intent.get("action")  or "").lower()
-    params  = intent.get("parameters") or {}
 
-    # Gmail Send → show preview, wait for YES/NO confirmation
+    # Gmail Send/Reply → collect missing fields step-by-step
     if service == "gmail" and action in ("send", "reply"):
-        to      = params.get("to") or "?"
-        subject = params.get("subject") or "(No Subject)"
-        body    = (params.get("body") or params.get("message") or params.get("content") or "").strip()
-
-        preview = (
-            f"📧 <b>Ready to send email</b>\n\n"
-            f"<b>To:</b> {to}\n"
-            f"<b>Subject:</b> {subject}\n"
-            f"<b>Body:</b>\n{body[:300]}{'…' if len(body) > 300 else ''}\n\n"
-            "Reply <b>YES</b> to send or <b>NO</b> to cancel."
-        )
-        _pending_sends[chat_id] = {"intent": intent, "user_id": user_id}
-        await send_message(chat_id, preview)
+        await _advance_email_send(chat_id, intent, user_id)
         return
 
-    # All other commands: execute directly
+    # All other commands — execute and return result
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
             functools.partial(execute_command, intent, access_token, refresh_token),
         )
-    except Exception:
-        logger.exception("[Telegram] Command execution failed for chat_id=%s", chat_id)
-        await send_message(chat_id, "⚠️ Something went wrong. Please try again.")
+        logger.info("[Telegram] NL result for chat_id=%s type=%s",
+                    chat_id, result.get("type") if isinstance(result, dict) else type(result))
+    except Exception as e:
+        logger.exception("[Telegram] NL execution failed for chat_id=%s", chat_id)
+        await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
         return
 
     if isinstance(result, dict) and result.get("type") == "needs_disambiguation":
@@ -304,32 +432,31 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
                 lines.append(f"• {c.get('display_name', '')} &lt;{c.get('email', '')}&gt;")
             else:
                 lines.append(f"• {c.get('name', '')} <i>({c.get('type', '')})</i>")
-        lines.append("\nPlease rephrase with more details.")
+        lines.append("\nPlease rephrase with more specific details.")
         await send_message(chat_id, "\n".join(lines))
         return
 
-    await send_message(chat_id, _format_nl_result(result))
+    await _send_long(chat_id, _format_nl_result(result))
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+# ── REST endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/connect")
 async def telegram_connect(request: Request):
-    """Generate a 6-digit verification code (fallback for manual flow)."""
-    user, _ = await _require_paid(request)
-    code    = generate_verification_code()
+    """Generate a verification code (legacy fallback)."""
+    user = await _require_auth(request)
+    code = generate_verification_code()
     await _set_connection(user["id"], {
         "verification_code": code,
-        "chat_id":           None,
-        "username":          None,
-        "verified_at":       None,
+        "chat_id":   None,
+        "username":  None,
+        "verified_at": None,
     })
     return {"code": code}
 
 
 @router.post("/disconnect")
 async def telegram_disconnect(request: Request):
-    """Unlink Telegram from the authenticated user's account."""
     user = await _require_auth(request)
     await _delete_connection(user["id"])
     return {"success": True}
@@ -337,10 +464,8 @@ async def telegram_disconnect(request: Request):
 
 @router.get("/status")
 async def telegram_status(request: Request):
-    """Return the Telegram connection status for the authenticated user."""
     user = await _require_auth(request)
     conn = await _get_connection(user["id"])
-
     if not conn:
         return {"connected": False, "pending": False, "username": None}
     if conn.get("verified_at"):
@@ -350,26 +475,24 @@ async def telegram_status(request: Request):
 
 @router.post("/test")
 async def telegram_test(request: Request):
-    """Send a test message to the verified Telegram connection."""
-    user, _ = await _require_paid(request)
-    conn    = await _get_connection(user["id"])
-
+    """Send a test message. No plan check — any connected user can test."""
+    user = await _require_auth(request)
+    conn = await _get_connection(user["id"])
     if not conn or not conn.get("verified_at") or not conn.get("chat_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="No verified Telegram connection found. Connect first.",
-        )
+        raise HTTPException(status_code=400, detail="No verified Telegram connection found.")
     try:
         await send_test_message(conn["chat_id"])
         return {"success": True}
     except Exception:
-        logger.exception("[Telegram] Test message failed for user %s", user["id"])
+        logger.exception("[Telegram] Test failed for user %s", user["id"])
         raise HTTPException(status_code=502, detail="Failed to send test message.")
 
 
+# ── Main webhook ──────────────────────────────────────────────────────────────
+
 @router.post("/webhook")
 async def telegram_webhook(request: Request):
-    """Receive JSON updates from the Telegram Bot API."""
+    """Receive and route Telegram Bot API updates."""
     try:
         body = await request.json()
     except Exception:
@@ -387,42 +510,37 @@ async def telegram_webhook(request: Request):
     if not chat_id or not text:
         return JSONResponse({"ok": True})
 
-    # ── Detect slash commands ────────────────────────────────────────────────
     is_command = text.startswith("/")
     if is_command:
-        raw_cmd = text.split()[0].lstrip("/").lower()
-        command = raw_cmd.split("@")[0]   # strip /cmd@BotName suffix
+        raw = text.split()[0].lstrip("/").lower()
+        command = raw.split("@")[0]
     else:
         command = None
 
-    # ── /start [USER_ID] — one-click auto-link ───────────────────────────────
+    # ── /start [USER_ID] — one-click auto-link ────────────────────────────────
     if command == "start":
         parts   = text.split(maxsplit=1)
         payload = parts[1].strip() if len(parts) > 1 else None
-
         if payload:
-            now_iso = datetime.now(tz.utc).isoformat()
             try:
                 await _set_connection(payload, {
                     "chat_id":           chat_id,
                     "username":          username,
-                    "verified_at":       now_iso,
+                    "verified_at":       datetime.now(tz.utc).isoformat(),
                     "verification_code": None,
                 })
                 await send_message(
                     chat_id,
-                    f"✅ <b>Your account is linked!</b>\n\n"
+                    "✅ <b>Your account is linked!</b>\n\n"
                     "You'll receive your daily briefing here.\n\n"
-                    "💬 <b>Just type anything naturally:</b>\n"
+                    "💬 <b>Just type naturally, like:</b>\n"
                     "— \"Find emails from LinkedIn\"\n"
                     "— \"What's on my calendar today?\"\n"
                     "— \"Send email to X about Y\"\n\n"
-                    "/briefing — morning briefing\n"
-                    "/tasks — priority items\n"
-                    "/help — all commands",
+                    "/briefing /tasks /automations /help",
                 )
             except Exception:
-                logger.exception("[Telegram] Auto-link failed for user_id=%s", payload)
+                logger.exception("[Telegram] Auto-link failed for payload=%s", payload)
                 await send_message(
                     chat_id,
                     "⚠️ Something went wrong linking your account. "
@@ -432,65 +550,44 @@ async def telegram_webhook(request: Request):
             await send_message(
                 chat_id,
                 "👋 <b>Welcome to WorkspaceFlow!</b>\n\n"
-                "Open your dashboard and click <b>Open Telegram Bot →</b> "
-                "to link your account automatically.",
+                "Open your dashboard and click <b>Open Telegram Bot →</b> to link automatically.",
             )
         return JSONResponse({"ok": True})
 
-    # ── /verify CODE — legacy manual flow (keep as fallback) ─────────────────
+    # ── /verify CODE — legacy fallback ───────────────────────────────────────
     if command == "verify":
         parts = text.split()
         if len(parts) < 2:
-            await send_message(
-                chat_id,
-                "Usage: <code>/verify CODE</code>\n\nGet your code from the WorkspaceFlow dashboard.",
-            )
+            await send_message(chat_id, "Usage: <code>/verify CODE</code>")
             return JSONResponse({"ok": True})
-
         code         = parts[1].strip()
         supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-        url          = (
+        url = (
             f"{supabase_url}/rest/v1/telegram_connections"
-            f"?verification_code=eq.{code}"
-            f"&verified_at=is.null"
-            f"&select=user_id"
+            f"?verification_code=eq.{code}&verified_at=is.null&select=user_id"
         )
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url, headers=_sb_headers())
             rows = resp.json() if resp.status_code == 200 else []
-
         if not rows:
-            await send_message(
-                chat_id,
-                "❌ Invalid or expired code.\n\nGenerate a fresh one from your dashboard.",
-            )
+            await send_message(chat_id, "❌ Invalid or expired code. Generate a fresh one from your dashboard.")
             return JSONResponse({"ok": True})
-
         user_id = rows[0]["user_id"]
-        now_iso = datetime.now(tz.utc).isoformat()
         await _set_connection(user_id, {
-            "chat_id":           chat_id,
-            "username":          username,
-            "verified_at":       now_iso,
-            "verification_code": None,
+            "chat_id": chat_id, "username": username,
+            "verified_at": datetime.now(tz.utc).isoformat(), "verification_code": None,
         })
-        await send_message(
-            chat_id,
-            f"✅ <b>Connected!</b>\n\n"
-            "💬 Just type anything naturally or use /help for commands.",
-        )
+        await send_message(chat_id, "✅ <b>Connected!</b>\n\n💬 Just type anything naturally or use /help.")
         return JSONResponse({"ok": True})
 
-    # ── All other messages — look up user by chat_id ─────────────────────────
+    # ── Look up user by chat_id (required for all further messages) ───────────
     supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    conn_url = (
-        f"{supabase_url}/rest/v1/telegram_connections"
-        f"?chat_id=eq.{chat_id}"
-        f"&verified_at=not.is.null"
-        f"&select=user_id"
-    )
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(conn_url, headers=_sb_headers())
+        resp = await client.get(
+            f"{supabase_url}/rest/v1/telegram_connections"
+            f"?chat_id=eq.{chat_id}&verified_at=not.is.null&select=user_id",
+            headers=_sb_headers(),
+        )
         rows = resp.json() if resp.status_code == 200 else []
 
     if not rows:
@@ -506,44 +603,58 @@ async def telegram_webhook(request: Request):
     access_token  = (profile or {}).get("google_access_token")
     refresh_token = (profile or {}).get("google_refresh_token")
 
-    # ── YES/NO confirmation for pending Gmail sends ───────────────────────────
-    if not is_command and chat_id in _pending_sends:
-        pending = _pending_sends[chat_id]
-        answer  = text.strip().upper()
-
-        if answer in ("YES", "Y", "SEND", "OK", "CONFIRM"):
-            del _pending_sends[chat_id]
-            from command_executor import execute_command
-            try:
-                loop   = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    functools.partial(
-                        execute_command,
-                        pending["intent"], access_token, refresh_token,
-                    ),
-                )
-                await send_message(chat_id, _format_nl_result(result))
-            except Exception:
-                logger.exception("[Telegram] Confirmed send failed for chat_id=%s", chat_id)
-                await send_message(chat_id, "⚠️ Failed to send the email. Please try again.")
-        elif answer in ("NO", "N", "CANCEL", "STOP"):
-            del _pending_sends[chat_id]
-            await send_message(chat_id, "❌ Cancelled.")
-        else:
-            # Treat as a new command; discard old pending
-            del _pending_sends[chat_id]
-            await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
+    # ── /cancel — clear any active conversation state ────────────────────────
+    if command == "cancel":
+        _conv.pop(chat_id, None)
+        await send_message(chat_id, "❌ Cancelled.")
         return JSONResponse({"ok": True})
 
-    # ── /help ─────────────────────────────────────────────────────────────────
+    # ── Conversation state machine (non-slash replies) ────────────────────────
+    if not is_command and chat_id in _conv:
+        state   = _conv[chat_id]["state"]
+        intent  = _conv[chat_id]["intent"]
+        params  = intent.setdefault("parameters", {})
+        answer  = text.strip()
+        upper   = answer.upper()
+
+        if state == "wait_subject":
+            params["subject"] = answer
+            # Check if body is also missing
+            if not _get_body(params):
+                _conv[chat_id]["state"] = "wait_body"
+                await send_message(chat_id, "✏️ What should the <b>email body</b> say?")
+            else:
+                await _show_email_preview(chat_id, intent, user_id)
+            return JSONResponse({"ok": True})
+
+        if state == "wait_body":
+            params["body"] = answer
+            await _show_email_preview(chat_id, intent, user_id)
+            return JSONResponse({"ok": True})
+
+        if state == "wait_confirm":
+            _conv.pop(chat_id, None)
+            if upper in ("YES", "Y", "SEND", "OK", "CONFIRM", "YEP", "YUP", "SURE"):
+                await _execute_email_send(chat_id, intent, access_token, refresh_token)
+            elif upper in ("NO", "N", "CANCEL", "STOP", "NOPE"):
+                await send_message(chat_id, "❌ Cancelled.")
+            else:
+                # Treat as new NL command; discard old pending
+                if not access_token:
+                    await send_message(chat_id, "⚠️ Google account not connected.")
+                    return JSONResponse({"ok": True})
+                await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
+            return JSONResponse({"ok": True})
+
+    # ── Slash commands ────────────────────────────────────────────────────────
+
     if command == "help":
         await send_message(
             chat_id,
             "💬 <b>Just type anything naturally, like:</b>\n"
             "— \"Find emails from LinkedIn\"\n"
             "— \"What's on my calendar today?\"\n"
-            "— \"Send email to X about Y\"\n"
+            "— \"Send email to sarah@example.com about the proposal\"\n"
             "— \"Show my pending tasks\"\n"
             "— \"Archive all newsletters\"\n\n"
             "<b>Or use commands:</b>\n"
@@ -551,10 +662,10 @@ async def telegram_webhook(request: Request):
             "/tasks — priority items\n"
             "/automations — list your automations\n"
             "/status — account info\n"
+            "/cancel — cancel current action\n"
             "/help — this message",
         )
 
-    # ── /status ───────────────────────────────────────────────────────────────
     elif command == "status":
         google_ok = bool(access_token)
         plan      = (profile or {}).get("plan", "free").title()
@@ -566,67 +677,49 @@ async def telegram_webhook(request: Request):
             "Telegram: ✅ connected",
         )
 
-    # ── /briefing ─────────────────────────────────────────────────────────────
     elif command == "briefing":
         if not access_token:
-            await send_message(
-                chat_id,
-                "⚠️ Your Google account isn't connected.\n"
-                "Please reconnect at workspace-flow.vercel.app",
-            )
+            await send_message(chat_id, "⚠️ Google account not connected. Reconnect at workspace-flow.vercel.app")
             return JSONResponse({"ok": True})
-
         await send_message(chat_id, "⏳ Fetching your briefing…")
         try:
             from google_service import fetch_morning_briefing_data
             from ai_engine import generate_briefing_summary
-
             loop     = asyncio.get_event_loop()
             raw_data = await loop.run_in_executor(
-                None,
-                functools.partial(fetch_morning_briefing_data, access_token, refresh_token),
+                None, functools.partial(fetch_morning_briefing_data, access_token, refresh_token)
             )
             briefing = await generate_briefing_summary(raw_data)
-
             if not isinstance(briefing, dict) or "schedule" not in briefing:
                 raise ValueError("Unexpected briefing format")
-
-            await send_message(chat_id, format_briefing_telegram(briefing))
-
+            await _send_long(chat_id, format_briefing_telegram(briefing))
         except Exception:
             logger.exception("[Telegram] Briefing failed for chat_id=%s", chat_id)
-            await send_message(chat_id, "⚠️ Something went wrong. Please try again in a moment.")
+            await send_message(chat_id, "⚠️ Something went wrong. Please try again.")
 
-    # ── /tasks ────────────────────────────────────────────────────────────────
     elif command == "tasks":
         if not access_token:
             await send_message(chat_id, "⚠️ Google account not connected.")
             return JSONResponse({"ok": True})
-
         await send_message(chat_id, "⏳ Fetching priority items…")
         try:
             from google_service import fetch_morning_briefing_data
             from ai_engine import generate_briefing_summary
-
             loop     = asyncio.get_event_loop()
             raw_data = await loop.run_in_executor(
-                None,
-                functools.partial(fetch_morning_briefing_data, access_token, refresh_token),
+                None, functools.partial(fetch_morning_briefing_data, access_token, refresh_token)
             )
             briefing = await generate_briefing_summary(raw_data)
-
-            urgent = (briefing.get("last_24h") or {}).get("urgent_items") or []
-            msg    = (
+            urgent   = (briefing.get("last_24h") or {}).get("urgent_items") or []
+            msg      = (
                 "<b>⚡ Priority Items</b>\n\n" + "\n".join(f"• {it}" for it in urgent)
                 if urgent else "✅ No urgent priority items right now."
             )
             await send_message(chat_id, msg)
-
         except Exception:
             logger.exception("[Telegram] Tasks failed for chat_id=%s", chat_id)
             await send_message(chat_id, "⚠️ Something went wrong. Please try again.")
 
-    # ── /automations ──────────────────────────────────────────────────────────
     elif command == "automations":
         rules = await _get_automations(user_id)
         if not rules:
@@ -634,7 +727,7 @@ async def telegram_webhook(request: Request):
                 chat_id,
                 "📋 <b>No automations yet.</b>\n\n"
                 "Create one at workspace-flow.vercel.app/dashboard/rules\n"
-                "or use: /automation add \"describe what you want\"",
+                "or type: /automation add \"describe what you want\"",
             )
         else:
             active   = [r for r in rules if r.get("is_active", True)]
@@ -648,43 +741,30 @@ async def telegram_webhook(request: Request):
                 lines.append("\n<b>Paused:</b>")
                 for r in inactive[:4]:
                     lines.append(f"• {r.get('title') or r.get('description', 'Untitled')}")
-            lines.append("\n/automation pause [name] — pause an automation")
-            lines.append("/automation run [name] — run manually")
+            lines.append("\n/automation pause [name] · /automation run [name]")
             await send_message(chat_id, "\n".join(lines))
 
-    # ── /automation add/pause/run ──────────────────────────────────────────────
     elif command == "automation":
-        parts      = text.split(maxsplit=2)
-        sub        = parts[1].lower() if len(parts) > 1 else ""
+        parts       = text.split(maxsplit=2)
+        sub         = parts[1].lower() if len(parts) > 1 else ""
         description = parts[2].strip().strip('"') if len(parts) > 2 else ""
 
         if sub == "add":
             if not description:
-                await send_message(
-                    chat_id,
-                    "Usage: /automation add \"description\"\n\n"
-                    "Example: /automation add \"Every Monday send me unread email summary\"",
-                )
+                await send_message(chat_id, 'Usage: /automation add "description"')
             else:
                 supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-                url     = f"{supabase_url}/rest/v1/rules"
-                headers = {**_sb_headers(True), "Prefer": "return=minimal"}
                 try:
                     async with httpx.AsyncClient(timeout=10.0) as client:
-                        await client.post(url, json={
-                            "user_id":     user_id,
-                            "title":       description[:80],
-                            "description": description,
-                            "is_active":   True,
-                        }, headers=headers)
-                    await send_message(
-                        chat_id,
-                        f"✅ Automation added:\n<i>{description}</i>\n\n"
-                        "View it at workspace-flow.vercel.app/dashboard/rules",
-                    )
+                        await client.post(
+                            f"{supabase_url}/rest/v1/rules",
+                            json={"user_id": user_id, "title": description[:80],
+                                  "description": description, "is_active": True},
+                            headers={**_sb_headers(True), "Prefer": "return=minimal"},
+                        )
+                    await send_message(chat_id, f"✅ Automation added:\n<i>{description}</i>")
                 except Exception:
-                    logger.exception("[Telegram] Failed to add automation for user %s", user_id)
-                    await send_message(chat_id, "⚠️ Failed to add automation. Please try from the dashboard.")
+                    await send_message(chat_id, "⚠️ Failed to add automation. Try from the dashboard.")
 
         elif sub in ("pause", "unpause", "enable", "disable"):
             if not description:
@@ -692,47 +772,37 @@ async def telegram_webhook(request: Request):
             else:
                 active = sub not in ("pause", "disable")
                 rules  = await _get_automations(user_id)
-                match  = next(
-                    (r for r in rules if description.lower() in (r.get("title") or "").lower()
-                     or description.lower() in (r.get("description") or "").lower()),
-                    None,
-                )
+                match  = next((r for r in rules
+                                if description.lower() in (r.get("title") or "").lower()
+                                or description.lower() in (r.get("description") or "").lower()), None)
                 if not match:
-                    await send_message(chat_id, f"❌ No automation found matching \"{description}\".")
+                    await send_message(chat_id, f'❌ No automation found matching "{description}".')
                 else:
                     supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-                    url     = f"{supabase_url}/rest/v1/rules?id=eq.{match['id']}&user_id=eq.{user_id}"
-                    headers = {**_sb_headers(True), "Prefer": "return=minimal"}
                     async with httpx.AsyncClient(timeout=10.0) as client:
-                        await client.patch(url, json={"is_active": active}, headers=headers)
-                    status_word = "resumed" if active else "paused"
-                    await send_message(chat_id, f"✅ Automation {status_word}: <i>{match.get('title', description)}</i>")
+                        await client.patch(
+                            f"{supabase_url}/rest/v1/rules?id=eq.{match['id']}&user_id=eq.{user_id}",
+                            json={"is_active": active},
+                            headers={**_sb_headers(True), "Prefer": "return=minimal"},
+                        )
+                    word = "resumed" if active else "paused"
+                    await send_message(chat_id, f"✅ Automation {word}: <i>{match.get('title', description)}</i>")
 
         elif sub == "run":
-            await send_message(
-                chat_id,
-                "⚡ Manual automation triggers are coming soon.\n"
-                "Manage automations at workspace-flow.vercel.app/dashboard/rules",
-            )
-
+            await send_message(chat_id, "⚡ Manual triggers coming soon. Manage at workspace-flow.vercel.app/dashboard/rules")
         else:
             await send_message(
                 chat_id,
-                "<b>/automation commands:</b>\n"
-                "/automation add \"description\" — create new\n"
+                "/automation add \"desc\" — create\n"
                 "/automation pause [name] — pause\n"
-                "/automation run [name] — trigger manually\n"
+                "/automation run [name] — trigger\n"
                 "/automations — list all",
             )
 
-    # ── Non-slash message OR unknown command → natural language ───────────────
     else:
+        # Unknown slash command OR any plain text → natural language
         if not access_token:
-            await send_message(
-                chat_id,
-                "⚠️ Your Google account isn't connected.\n"
-                "Please reconnect at workspace-flow.vercel.app",
-            )
+            await send_message(chat_id, "⚠️ Google account not connected. Reconnect at workspace-flow.vercel.app")
             return JSONResponse({"ok": True})
         await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
 
