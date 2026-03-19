@@ -1,0 +1,360 @@
+.commandSection {
+  margin-bottom: 32px;
+}
+
+.commandForm {
+  margin-bottom: 12px;
+}
+
+.commandInputWrapper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 4px;
+  transition: all var(--transition-fast);
+}
+
+.commandInputWrapper:focus-within {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(79, 125, 249, 0.1), var(--shadow-glow);
+}
+
+.commandPrefix {
+  padding: 0 12px 0 16px;
+  font-size: 1.2rem;
+}
+
+.commandInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  padding: 14px 0;
+  min-width: 0;
+}
+
+.commandInput::placeholder {
+  color: var(--text-muted);
+}
+
+.commandSubmit {
+  flex-shrink: 0;
+  border-radius: 10px !important;
+}
+
+/* Local keyframe — independent of globals.css, never interrupted by JS */
+@keyframes commandSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Spinner is ALWAYS in the DOM — only visibility changes.
+   This prevents React unmount/remount from restarting the animation. */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: commandSpin 0.7s linear infinite;
+  will-change: transform;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.spinnerIdle {
+  width: 0;
+  height: 16px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  animation: commandSpin 0.7s linear infinite;
+  will-change: transform;
+  display: inline-block;
+  flex-shrink: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.examples {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.examplesLabel {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding-top: 6px;
+  flex-shrink: 0;
+}
+
+.exampleChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.chip:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue-light);
+  background: rgba(79, 125, 249, 0.05);
+}
+
+/* Result */
+.resultSection {
+  margin-bottom: 32px;
+  animation: fadeInUp 0.3s ease;
+}
+
+.resultCard {
+  background: var(--bg-card);
+  border: 1px solid var(--accent-blue);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-glow);
+}
+
+.resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.resultHeader h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.resultBadge {
+  font-size: 0.72rem;
+  padding: 3px 10px;
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--accent-green);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+
+.actionPreview {
+  margin-bottom: 16px;
+}
+
+.actionService {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.serviceIcon {
+  font-size: 1rem;
+}
+
+.actionDetails {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.detailRow {
+  display: flex;
+  gap: 8px;
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+.detailLabel {
+  font-weight: 600;
+  color: var(--text-tertiary);
+  min-width: 56px;
+}
+
+.detailBody {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.detailBody pre {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.resultActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* History */
+.historySection {
+  margin-bottom: 32px;
+}
+
+.historyTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+}
+
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.historyItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+}
+
+.historyItem:hover {
+  background: var(--bg-glass);
+}
+
+.historyIcon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--accent-green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.historyContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  gap: 16px;
+  min-width: 0;
+}
+
+.historyCommand {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.historyTime {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Supported Actions */
+.actionsGrid {
+  margin-bottom: 32px;
+}
+
+.actionsTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+}
+
+.actionCards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.actionCard {
+  padding: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+
+.actionCard h4 {
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+
+.actionCard ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.actionCard li {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  padding-left: 12px;
+  position: relative;
+}
+
+.actionCard li::before {
+  content: '·';
+  position: absolute;
+  left: 0;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .commandInputWrapper {
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .commandInput {
+    width: 100%;
+    padding: 10px 0;
+  }
+
+  .commandSubmit {
+    width: 100%;
+  }
+
+  .actionCards {
+    grid-template-columns: 1fr;
+  }
+
+  .exampleChips {
+    display: none;
+  }
+
+  .resultActions {
+    flex-wrap: wrap;
+  }
+}

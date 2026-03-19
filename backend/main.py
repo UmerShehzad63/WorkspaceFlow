@@ -1,0 +1,494 @@
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+import logging
+import os
+import asyncio
+import functools
+from datetime import datetime, timezone
+from typing import List, Optional
+from dotenv import load_dotenv
+
+# MUST load env vars before importing other modules
+load_dotenv()
+
+import httpx
+from google_service import fetch_morning_briefing_data, fetch_schedule_only
+from ai_engine import generate_briefing_summary, parse_command_intent
+from command_executor import execute_command
+from email_service import send_automation_request_email, send_support_email, send_preview_email
+from routes.telegram import router as telegram_router
+from jobs.scheduler import start_scheduler, stop_scheduler
+
+logging.basicConfig(level=logging.ERROR)
+logger = logging.getLogger(__name__)
+
+# ── App lifecycle: start/stop scheduler ────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+limiter = Limiter(key_func=get_remote_address)
+app     = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── Mount Telegram router ───────────────────────────────────────────────────
+app.include_router(telegram_router)
+
+# ── Security headers ────────────────────────────────────────────────────────
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"]  = "nosniff"
+    response.headers["X-Frame-Options"]         = "DENY"
+    response.headers["Referrer-Policy"]         = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"]        = "0"
+    response.headers["Permissions-Policy"]      = "camera=(), microphone=(), geolocation=()"
+    return response
+
+# ── CORS ────────────────────────────────────────────────────────────────────
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins if o.strip() and o.strip() != "*"]
+if not ALLOWED_ORIGINS:
+    ALLOWED_ORIGINS = ["http://localhost:3000"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+# ── Auth helpers ─────────────────────────────────────────────────────────────
+async def verify_supabase_user(token: str):
+    url     = f"{os.getenv('NEXT_PUBLIC_SUPABASE_URL')}/auth/v1/user"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "apikey":        os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+    except Exception:
+        pass
+    return None
+
+async def require_auth(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    token = auth_header.split(" ")[1]
+    user  = await verify_supabase_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return user
+
+# ── Allowed MIME types for file uploads ────────────────────────────────────
+ALLOWED_UPLOAD_MIME_TYPES = {
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+    "application/pdf", "text/plain",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+# ── Health check ─────────────────────────────────────────────────────────────
+@app.get("/health")
+async def health():
+    """Unauthenticated liveness probe for Fly.io / Docker HEALTHCHECK."""
+    return {"status": "ok"}
+
+@app.get("/")
+async def root():
+    return {"status": "WorkspaceFlow Backend Online", "model": "gpt-4o-mini (OpenAI)"}
+
+
+# ── Morning Briefing — schedule only (fast, ~1-2 s) ─────────────────────────
+@app.get("/api/briefing/schedule")
+@limiter.limit("20/minute")
+async def get_briefing_schedule(request: Request):
+    user     = await require_auth(request)
+    user_id  = user["id"]
+
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    profile_url  = f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    headers      = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp     = await client.get(profile_url, headers=headers)
+        profiles = resp.json() if resp.status_code == 200 else []
+
+    if not profiles or not profiles[0].get("google_access_token"):
+        raise HTTPException(status_code=400, detail="Google account not connected.")
+
+    profile       = profiles[0]
+    access_token  = profile["google_access_token"]
+    refresh_token = profile.get("google_refresh_token")
+
+    try:
+        loop     = asyncio.get_event_loop()
+        schedule = await loop.run_in_executor(
+            None, functools.partial(fetch_schedule_only, access_token, refresh_token)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch calendar: {str(e)[:200]}")
+
+    return {"schedule": schedule}
+
+
+# ── Morning Briefing — full (calendar + Gmail + AI) ──────────────────────────
+@app.get("/api/briefing")
+@limiter.limit("10/minute")
+async def get_briefing(request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    profile_url  = f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    headers      = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(profile_url, headers=headers)
+        profiles = response.json() if response.status_code == 200 else []
+
+        if not profiles:
+            raise HTTPException(status_code=404, detail="User profile not found")
+
+        profile       = profiles[0]
+        access_token  = profile.get("google_access_token")
+        refresh_token = profile.get("google_refresh_token")
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Google account not connected. Please reconnect.")
+
+    try:
+        raw_data = fetch_morning_briefing_data(access_token, refresh_token)
+    except Exception as e:
+        logger.exception("Failed to fetch Google data (user_id=%s)", user_id)
+        if any(kw in str(e).lower() for kw in ["getaddrinfo", "nameresolution", "servernotfound", "dns"]):
+            raise HTTPException(status_code=502, detail="Failed to reach Google APIs — DNS/network error.")
+        raise HTTPException(status_code=502, detail="Failed to fetch workspace data. Try reconnecting your Google account.")
+
+    briefing = await generate_briefing_summary(raw_data)
+    if not isinstance(briefing, dict) or "schedule" not in briefing or "last_24h" not in briefing:
+        logger.error("[OpenAI] Briefing generation failed: %s", briefing)
+        raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Try again shortly.")
+
+    return briefing
+
+
+# ── Command Bar ──────────────────────────────────────────────────────────────
+@app.post("/api/command")
+@limiter.limit("20/minute")
+async def run_command(request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    data     = await request.json()
+    command  = data.get("command", "").strip()
+    overrides = data.get("overrides") or {}
+
+    if not command:
+        raise HTTPException(status_code=400, detail="Command cannot be empty")
+    if len(command) > 500:
+        raise HTTPException(status_code=400, detail="Command too long (max 500 characters)")
+
+    intent = await parse_command_intent(command)
+    if not isinstance(intent, dict) or "service" not in intent:
+        raise HTTPException(status_code=503, detail="AI service unavailable. Try again shortly.")
+
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    profile_url  = f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    g_headers    = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp     = await client.get(profile_url, headers=g_headers)
+        profiles = resp.json() if resp.status_code == 200 else []
+
+    if not profiles:
+        raise HTTPException(status_code=404, detail="User profile not found")
+
+    profile       = profiles[0]
+    access_token  = profile.get("google_access_token")
+    refresh_token = profile.get("google_refresh_token")
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Google account not connected. Please reconnect.")
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, functools.partial(execute_command, intent, access_token, refresh_token, overrides)
+        )
+    except Exception as e:
+        error_str = str(e)
+        logger.exception("[Command] Execution error")
+        if "403" in error_str or "insufficient" in error_str.lower() or "scope" in error_str.lower():
+            raise HTTPException(status_code=403, detail="Insufficient Google permissions. Please sign out and sign in again.")
+        if "timeout" in error_str.lower():
+            raise HTTPException(status_code=504, detail="Google API timed out. Please try again.")
+        raise HTTPException(status_code=502, detail="Command execution failed. Please try again.")
+
+    if isinstance(result, dict) and result.get("type") == "error":
+        raise HTTPException(status_code=422, detail=result["error"])
+    if isinstance(result, dict) and result.get("type") == "needs_disambiguation":
+        return {"intent": intent, "result": result, "success": False, "needs_disambiguation": True}
+
+    return {"intent": intent, "result": result, "success": True}
+
+
+# ── Send Preview ─────────────────────────────────────────────────────────────
+@app.post("/api/send-preview")
+@limiter.limit("5/minute")
+async def send_preview(request: Request):
+    """
+    Send the morning briefing to the user's preferred channel.
+    Priority: Telegram (Pro/Team, if connected) → email.
+    """
+    user    = await require_auth(request)
+    user_id = user["id"]
+    data    = await request.json()
+    briefing = data.get("briefing")
+    note     = (data.get("note") or "").strip() or None   # optional personal note
+
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    sb_headers   = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+
+    # Fetch profile (Google tokens + plan)
+    profile_url = (
+        f"{supabase_url}/rest/v1/profiles"
+        f"?id=eq.{user_id}"
+        f"&select=google_access_token,google_refresh_token,email,plan"
+    )
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp     = await client.get(profile_url, headers=sb_headers)
+        profiles = resp.json() if resp.status_code == 200 else []
+
+    if not profiles:
+        raise HTTPException(status_code=404, detail="User profile not found")
+
+    profile       = profiles[0]
+    access_token  = profile.get("google_access_token")
+    refresh_token = profile.get("google_refresh_token")
+    user_email    = user.get("email") or profile.get("email", "")
+    meta          = user.get("user_metadata") or {}
+    user_name     = (meta.get("full_name") or meta.get("name") or "").strip() or user_email.split("@")[0]
+    plan          = (profile.get("plan") or "free").lower()
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Google account not connected. Please reconnect.")
+
+    # Fetch fresh briefing if not supplied
+    if not briefing:
+        try:
+            loop     = asyncio.get_event_loop()
+            raw_data = await loop.run_in_executor(
+                None, functools.partial(fetch_morning_briefing_data, access_token, refresh_token)
+            )
+            briefing = await generate_briefing_summary(raw_data)
+            if not isinstance(briefing, dict) or "schedule" not in briefing:
+                raise ValueError("Briefing generation returned unexpected data")
+        except Exception:
+            raise HTTPException(status_code=502, detail="Failed to fetch briefing. Please try again.")
+
+    loop = asyncio.get_event_loop()
+
+    # Priority 1: Telegram (Pro/Team only, if connected)
+    if plan in ("pro", "team"):
+        tg_conn_url = (
+            f"{supabase_url}/rest/v1/telegram_connections"
+            f"?user_id=eq.{user_id}"
+            f"&verified_at=not.is.null"
+            f"&select=chat_id"
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            tg_resp = await client.get(tg_conn_url, headers=sb_headers)
+            tg_rows = tg_resp.json() if tg_resp.status_code == 200 else []
+
+        if tg_rows and tg_rows[0].get("chat_id"):
+            try:
+                from services.telegram import send_message, format_briefing_telegram
+                message = format_briefing_telegram(briefing)
+                if note:
+                    message = f"📝 <i>{note}</i>\n\n" + message
+                await send_message(tg_rows[0]["chat_id"], message)
+                return {"success": True, "channel": "telegram"}
+            except RuntimeError as e:
+                logger.warning("[Telegram] Not configured, falling back to email: %s", e)
+            except Exception as e:
+                logger.warning("[Telegram] Send failed, falling back to email: %s", e)
+
+    # Fallback: Email
+    try:
+        await loop.run_in_executor(
+            None, functools.partial(send_preview_email, user_email, user_name, briefing, note)
+        )
+        return {"success": True, "channel": "email"}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to send preview. Please try again.")
+
+
+# ── Request Automation ────────────────────────────────────────────────────────
+@app.post("/api/request-automation")
+@limiter.limit("5/minute")
+async def request_automation(request: Request):
+    user = await require_auth(request)
+
+    data        = await request.json()
+    title       = (data.get("title")       or "").strip()
+    description = (data.get("description") or "").strip()
+    trigger_app = (data.get("trigger_app") or "").strip()
+    action_app  = (data.get("action_app")  or "").strip()
+
+    if not description:
+        raise HTTPException(status_code=400, detail="Description is required")
+
+    requester_email = user.get("email", "")
+    meta            = user.get("user_metadata") or {}
+    requester_name  = (meta.get("full_name") or meta.get("name") or "").strip() or requester_email.split("@")[0]
+    timestamp       = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                send_automation_request_email,
+                requester_name, requester_email,
+                title, description,
+                trigger_app, action_app,
+                timestamp,
+            ),
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to send request email.")
+
+    return {"success": True, "message": "Request sent successfully"}
+
+
+# ── Contact Support ───────────────────────────────────────────────────────────
+@app.post("/api/support")
+@limiter.limit("5/minute")
+async def contact_support(
+    request:      Request,
+    subject_type: str                      = Form(...),
+    description:  str                      = Form(...),
+    files:        Optional[List[UploadFile]] = File(None),
+):
+    user         = await require_auth(request)
+    subject_type = subject_type.strip()
+    description  = description.strip()
+
+    if not description:
+        raise HTTPException(status_code=400, detail="Description is required")
+
+    valid_subjects = {"Technical Error", "Feedback", "Feature Request"}
+    if subject_type not in valid_subjects:
+        raise HTTPException(status_code=400, detail=f"Invalid subject. Must be one of: {', '.join(valid_subjects)}")
+
+    user_email = user.get("email", "")
+    meta       = user.get("user_metadata") or {}
+    user_name  = (meta.get("full_name") or meta.get("name") or "").strip() or user_email.split("@")[0]
+    timestamp  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    attachments = []
+    if files:
+        for upload in files[:5]:
+            if not upload.filename:
+                continue
+            mime = upload.content_type or "application/octet-stream"
+            if mime not in ALLOWED_UPLOAD_MIME_TYPES:
+                raise HTTPException(status_code=400, detail=f"File type not allowed: {mime}")
+            content = await upload.read(5 * 1024 * 1024)
+            attachments.append((upload.filename, content, mime))
+
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                send_support_email,
+                user_name, user_email,
+                subject_type, description,
+                attachments, timestamp,
+            ),
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to send support email.")
+
+    return {"success": True, "message": "Support request sent successfully"}
+
+
+# ── Diagnostic ────────────────────────────────────────────────────────────────
+@app.get("/api/test")
+@limiter.limit("10/minute")
+async def test_connectivity(request: Request):
+    """Authenticated connectivity check — prevents config enumeration."""
+    await require_auth(request)
+    results = {}
+
+    from ai_engine import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+    results["openai_key_configured"]     = bool(OPENAI_API_KEY)
+    results["google_client_configured"]  = bool(os.getenv("GOOGLE_CLIENT_ID"))
+    results["supabase_configured"]       = bool(os.getenv("NEXT_PUBLIC_SUPABASE_URL"))
+    results["telegram_configured"]        = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
+
+    import socket
+    try:
+        socket.getaddrinfo("gmail.googleapis.com", 443)
+        results["google_dns_reachable"] = True
+    except socket.gaierror as e:
+        results["google_dns_reachable"] = False
+        results["google_dns_error"]     = str(e)
+
+    if OPENAI_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.post(
+                    OPENAI_BASE_URL,
+                    json={"model": OPENAI_MODEL, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                )
+                results["openai_reachable"] = True
+                results["openai_status"]    = resp.status_code
+        except Exception as e:
+            results["openai_reachable"] = False
+            results["openai_error"]     = str(e)
+
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    if supabase_url:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{supabase_url}/rest/v1/")
+                results["supabase_reachable"] = resp.status_code < 500
+        except Exception as e:
+            results["supabase_reachable"] = False
+            results["supabase_error"]     = str(e)
+
+    return results
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -1,0 +1,47 @@
+# fly.toml — WorkspaceFlow on Fly.io
+# Deploy: flyctl deploy
+# First deploy: flyctl launch --no-deploy, then set secrets, then flyctl deploy
+
+app            = "workspaceflow"
+primary_region = "iad"
+
+[build]
+  # NEXT_PUBLIC_* vars are baked into the client bundle at build time.
+  # Pass them via: flyctl deploy --build-arg NEXT_PUBLIC_SUPABASE_URL=https://...
+  # Or set in the [build.args] block below — values here are NOT secret.
+  [build.args]
+    NEXT_PUBLIC_BACKEND_URL      = ""
+    # Override the remaining NEXT_PUBLIC_* args at deploy time:
+    # flyctl deploy \
+    #   --build-arg NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co \
+    #   --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_... \
+    #   --build-arg NEXT_PUBLIC_SITE_URL=https://workspaceflow.fly.dev \
+    #   --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_... \
+    #   --build-arg NEXT_PUBLIC_STRIPE_PRO_PRICE_ID=price_... \
+    #   --build-arg NEXT_PUBLIC_STRIPE_TEAM_PRICE_ID=price_...
+
+[http_service]
+  internal_port       = 8080
+  force_https         = true
+  auto_stop_machines  = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type       = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[[vm]]
+  memory   = "512mb"
+  cpu_kind = "shared"
+  cpus     = 1
+
+[checks]
+  [checks.health]
+    grace_period = "30s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/health"
+    protocol     = "http"
+    timeout      = "10s"

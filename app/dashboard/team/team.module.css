@@ -1,0 +1,243 @@
+.section {
+  margin-bottom: 32px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section:last-child {
+  border-bottom: none;
+}
+
+.sectionTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+}
+
+/* Empty state */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 36px 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.emptyState p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.emptyIcon {
+  font-size: 1.8rem;
+  opacity: 0.5;
+}
+
+/* Members */
+.membersList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memberCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  gap: 12px;
+  transition: all var(--transition-fast);
+}
+
+.memberCard:hover {
+  border-color: var(--border-color-hover);
+}
+
+.memberInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.memberAvatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.memberName {
+  display: block;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.memberEmail {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.memberActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.memberRole {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Shared Rules */
+.sharedRules {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sharedRule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.sharedRuleName {
+  display: block;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.sharedRuleBy {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Controls */
+.controlsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.controlItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  gap: 16px;
+}
+
+.controlItem strong {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.controlItem span {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+/* Billing */
+.billingCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  background: rgba(79, 125, 249, 0.04);
+  border: 1px solid rgba(79, 125, 249, 0.15);
+  border-radius: var(--radius-lg);
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.billingCard strong {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.billingCard p {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 24px;
+  animation: fadeIn 0.2s ease;
+}
+
+.modalContent {
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  padding: 32px;
+  animation: scaleIn 0.3s ease;
+  box-shadow: var(--shadow-xl);
+}
+
+.modalContent h2 {
+  font-size: 1.2rem;
+  margin-bottom: 4px;
+}
+
+@media (max-width: 768px) {
+  .memberCard {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .memberActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .controlItem {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .billingCard {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

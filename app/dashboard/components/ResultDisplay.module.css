@@ -1,0 +1,19 @@
+.actionDetails {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.detailRow {
+  display: flex;
+  gap: 8px;
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+.detailLabel {
+  font-weight: 600;
+  color: var(--text-tertiary);
+  min-width: 56px;
+}

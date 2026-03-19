@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+slowapi
+python-dotenv
+python-multipart
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+httpx
+pydantic
+openai
+python-telegram-bot
+apscheduler

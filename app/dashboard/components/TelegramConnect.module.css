@@ -1,0 +1,162 @@
+.container {
+  padding: 12px 14px;
+  background: rgba(36, 161, 222, 0.05);
+  border: 1px solid rgba(36, 161, 222, 0.18);
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.tgIcon {
+  font-size: 0.95rem;
+}
+
+.label {
+  color: var(--text-secondary);
+  font-weight: 600;
+  flex: 1;
+}
+
+.badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+
+.badgeOn {
+  background: rgba(36, 161, 222, 0.15);
+  color: #24a1de;
+}
+
+.badgeOff {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+
+.username {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+  font-family: monospace;
+}
+
+/* ── Pending verification box ── */
+.pendingBox {
+  background: rgba(36, 161, 222, 0.06);
+  border: 1px dashed rgba(36, 161, 222, 0.25);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.pendingLabel {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+}
+
+.codeBox {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.verifyCmd {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #24a1de;
+  letter-spacing: 0.02em;
+}
+
+.pendingHint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin: 0;
+  text-align: center;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+/* ── Buttons ── */
+.btnRow {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+.connectBtn,
+.disconnectBtn,
+.testBtn,
+.cancelBtn {
+  width: 100%;
+  padding: 7px 0;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+}
+
+.connectBtn:disabled,
+.disconnectBtn:disabled,
+.testBtn:disabled,
+.cancelBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.connectBtn {
+  background: #24a1de;
+  color: #fff;
+}
+.connectBtn:hover:not(:disabled) { opacity: 0.88; }
+
+.testBtn {
+  background: rgba(36, 161, 222, 0.12);
+  color: #24a1de;
+  border: 1px solid rgba(36, 161, 222, 0.25);
+}
+.testBtn:hover:not(:disabled) { background: rgba(36, 161, 222, 0.2); }
+
+.disconnectBtn,
+.cancelBtn {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+.disconnectBtn:hover:not(:disabled),
+.cancelBtn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); }
+
+.cancelBtn {
+  margin-top: 6px;
+  font-size: 0.75rem;
+}
+
+/* ── Status messages ── */
+.msgOk {
+  font-size: 0.76rem;
+  color: #24a1de;
+  margin: 8px 0 0;
+}
+
+.msgErr {
+  font-size: 0.76rem;
+  color: #ef4444;
+  margin: 8px 0 0;
+}

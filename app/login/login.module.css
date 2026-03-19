@@ -1,0 +1,58 @@
+.scopes {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+.scopes h4 {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.scopeList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scopeItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+}
+
+.scopeIcon {
+  font-size: 1.2rem;
+  margin-top: 2px;
+}
+
+.scopeItem strong {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.scopeItem span {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+}
+
+.trust {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+
+.trustItem {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}

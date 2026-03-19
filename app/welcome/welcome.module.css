@@ -1,0 +1,124 @@
+.welcomeCard {
+  width: 100%;
+  max-width: 520px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  padding: 40px;
+  animation: scaleIn 0.4s ease;
+  box-shadow: var(--shadow-xl);
+  text-align: center;
+}
+
+.checkmark {
+  margin-bottom: 24px;
+  animation: scaleIn 0.5s ease 0.2s both;
+}
+
+.title {
+  font-size: 1.75rem;
+  margin-bottom: 24px;
+}
+
+.trialBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px;
+  background: rgba(52, 211, 153, 0.06);
+  border: 1px solid rgba(52, 211, 153, 0.15);
+  border-radius: var(--radius-lg);
+  text-align: left;
+  margin-bottom: 20px;
+}
+
+.trialIcon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.trialBanner strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.trialBanner p {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.trialExpiry {
+  font-size: 0.75rem;
+  color: var(--accent-green);
+  font-weight: 500;
+}
+
+.nextStep {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  margin-bottom: 24px;
+}
+
+.nextStepIcon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+}
+
+.nextStep p {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  text-align: left;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.features {
+  padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+  text-align: left;
+}
+
+.features h4 {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.featuresList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.featureItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: var(--text-tertiary);
+}
+
+.featureItem span:first-child {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 480px) {
+  .welcomeCard {
+    padding: 24px;
+  }
+}

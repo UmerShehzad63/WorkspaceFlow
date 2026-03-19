@@ -1,0 +1,34 @@
+version: '3.8'
+
+# Local Docker test: mirrors the Fly.io single-container setup.
+# Usage:
+#   cp .env.example .env          # fill in all values
+#   docker compose up --build
+#   open http://localhost:8080
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # NEXT_PUBLIC_* vars are baked in at build time — read from the .env file
+      args:
+        NEXT_PUBLIC_SUPABASE_URL:         ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY:    ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SITE_URL:             ${NEXT_PUBLIC_SITE_URL:-http://localhost:8080}
+        NEXT_PUBLIC_BACKEND_URL:          ""
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_STRIPE_PRO_PRICE_ID:  ${NEXT_PUBLIC_STRIPE_PRO_PRICE_ID}
+        NEXT_PUBLIC_STRIPE_TEAM_PRICE_ID: ${NEXT_PUBLIC_STRIPE_TEAM_PRICE_ID}
+
+    # Runtime secrets (not baked in — injected into the container at start)
+    env_file:
+      - .env
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      NODE_ENV: production
+      # Override ALLOWED_ORIGINS for local Docker testing
+      ALLOWED_ORIGINS: "http://localhost:8080"

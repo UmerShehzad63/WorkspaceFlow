@@ -1,0 +1,136 @@
+.settingsSection {
+  margin-bottom: 32px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.settingsSection:last-child {
+  border-bottom: none;
+}
+
+.settingsLabel {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.settingsLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* Account Card */
+.accountCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  gap: 16px;
+}
+
+.accountInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.accountAvatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--gradient-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.accountInfo strong {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.accountInfo span {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+}
+
+/* Time Row */
+.timeRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Pause */
+.pauseRow {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Save */
+.saveBar {
+  margin-bottom: 32px;
+}
+
+/* Plan Card */
+.planCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  background: rgba(79, 125, 249, 0.04);
+  border: 1px solid rgba(79, 125, 249, 0.15);
+  border-radius: var(--radius-lg);
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.planInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.planIcon {
+  font-size: 1.5rem;
+}
+
+.planInfo strong {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.planInfo p {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin: 2px 0 0;
+}
+
+@media (max-width: 768px) {
+  .accountCard {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .timeRow {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .planCard {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

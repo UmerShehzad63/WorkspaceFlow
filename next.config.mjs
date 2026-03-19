@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
+  // Produces a self-contained Node.js server in .next/standalone/
+  // Required for Docker deployment — this is what the container runs.
+  output: 'standalone',
 };
 
 export default nextConfig;

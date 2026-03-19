@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find C:UsersumersOneDriveDesktopAppsWorkSpaceFLowworkspaceflow -type f -name next.config.* -o -name tailwind.config.* -o -name .env* -o -name tsconfig.json)",
+      "Bash(find C:UsersumersOneDriveDesktopAppsWorkSpaceFLowworkspaceflow -type f \\\\\\(-name *.js -o -name *.jsx -o -name *.ts -o -name *.tsx -o -name *.css -o -name *.json \\\\\\) ! -path */node_modules/* ! -path */.next/*)",
+      "Bash(find C:UsersumersOneDriveDesktopAppsWorkSpaceFLowworkspaceflowbackend -type f \\\\\\(-name *.py -o -name *.txt -o -name *.md -o -name *.json -o -name *.yml -o -name *.yaml \\\\\\))",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(python -c \"import google_service; print\\(''google_service import OK''\\)\")",
+      "Bash(python -c \"import ai_engine; print\\(''ai_engine import OK''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(find /c/Users/umers/OneDrive/Desktop/Apps/WorkSpaceFLow/workspaceflow -maxdepth 1 -type f \\\\\\(-name *.json -o -name *.js -o -name .env.local -o -name .gitignore \\\\\\))",
+      "Bash(node -e \":*)",
+      "Bash(npx next:*)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(grep -rn \"localhost\\\\|127.0.0.1\" C:UsersumersOneDriveDesktopAppsWorkSpaceFLowworkspaceflow --include=*.py --include=*.js)",
+      "Bash(ls:*)",
+      "Bash(pip install:*)",
+      "Bash(curl:*)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d[''''tunnels''''][0][''''public_url'''']\\)\")"
+    ]
+  }
+}

@@ -1,0 +1,149 @@
+'use client';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
+import styles from './setup.module.css';
+
+// Generate beautifully formatted timezones (e.g. "America/New_York" -> "America - New York")
+const rawTimezones = typeof Intl !== 'undefined' && Intl.supportedValuesOf 
+  ? Intl.supportedValuesOf('timeZone') 
+  : ['America/New_York', 'Europe/London', 'Asia/Tokyo'];
+
+const TIMEZONES = rawTimezones.map(tz => {
+  const parts = tz.split('/');
+  const region = parts[0].replace(/_/g, ' ');
+  const city = parts.slice(1).join(' - ').replace(/_/g, ' ');
+  return {
+    value: tz,
+    label: city ? `${region} - ${city}` : region
+  };
+}).sort((a, b) => a.label.localeCompare(b.label));
+
+export default function SetupPage() {
+  const router = useRouter();
+  const [time, setTime] = useState('08:00');
+  const [timezone, setTimezone] = useState('America/New_York');
+  const [searchValue, setSearchValue] = useState('');
+  const [delivery, setDelivery] = useState('email');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    
+    // Save preferences to Supabase
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      await supabase
+        .from('profiles')
+        .update({
+          briefing_time:   time,
+          timezone:        timezone,
+          delivery_method: delivery,
+          setup_completed: true,
+        })
+        .eq('id', session.user.id);
+    }
+    
+    router.push('/welcome');
+  };
+
+  return (
+    <div className="auth-page">
+      <div className={styles.setupCard}>
+        <div className={styles.progress}>
+          <div className={styles.progressStep}>
+            <div className={`${styles.progressDot} ${styles.completed}`}>✓</div>
+            <span>Connect</span>
+          </div>
+          <div className={styles.progressLine} />
+          <div className={styles.progressStep}>
+            <div className={`${styles.progressDot} ${styles.active}`}>2</div>
+            <span>Configure</span>
+          </div>
+          <div className={styles.progressLine} />
+          <div className={styles.progressStep}>
+            <div className={styles.progressDot}>3</div>
+            <span>Done</span>
+          </div>
+        </div>
+
+        <h1 className={styles.title}>Quick Setup</h1>
+        <p className={styles.subtitle}>Just a few preferences and you&apos;re good to go.</p>
+
+        <form onSubmit={handleSubmit} className={styles.form}>
+          <div className={styles.formGroup}>
+            <label className="input-label">⏰ When should we send your briefing?</label>
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="input"
+            />
+          </div>
+
+          <div className={styles.formGroup}>
+            <label className="input-label">🌍 Your timezone</label>
+            <input
+              list="timezone-options"
+              value={searchValue}
+              onChange={(e) => {
+                setSearchValue(e.target.value);
+                // Try to find the matching timezone value from the beautiful label
+                const match = TIMEZONES.find(t => t.label === e.target.value);
+                if (match) setTimezone(match.value);
+              }}
+              className="input"
+              placeholder="Search by region or city (e.g. Europe - London)"
+              autoComplete="off"
+            />
+            <datalist id="timezone-options">
+              {TIMEZONES.map(tz => (
+                <option key={tz.value} value={tz.label}>{tz.value}</option>
+              ))}
+            </datalist>
+            <span className={styles.hint}>Current selected underlying timezone: {timezone}</span>
+          </div>
+
+          <div className={styles.formGroup}>
+            <label className="input-label">📬 How should we deliver it?</label>
+            <div className="radio-group">
+              <label
+                className={`radio-label ${delivery === 'email' ? 'selected' : ''}`}
+                onClick={() => setDelivery('email')}
+              >
+                <div className="radio-dot" />
+                <div>
+                  <strong style={{ display: 'block', fontSize: '0.9rem' }}>Email</strong>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                    Delivered to alex@company.com
+                  </span>
+                </div>
+              </label>
+              <label
+                className={`radio-label ${delivery === 'telegram' ? 'selected' : ''}`}
+                onClick={() => setDelivery('telegram')}
+              >
+                <div className="radio-dot" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                  <div>
+                    <strong style={{ display: 'block', fontSize: '0.9rem' }}>Telegram ✈️ <span style={{ fontSize: '0.7rem', color: 'var(--accent-blue)' }}>Pro/Team</span></strong>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                      Connect your bot from the dashboard sidebar
+                    </span>
+                  </div>
+                  <span className="badge badge-pro" style={{ marginLeft: 'auto' }}>PRO</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <button type="submit" disabled={saving} className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: '8px', border: 'none', fontFamily: 'inherit' }}>
+            {saving ? 'Saving...' : 'Start my 3-day trial →'}
+          </button>
+          <p className={styles.trialNote}>No credit card required · Full Pro access for 3 days</p>
+        </form>
+      </div>
+    </div>
+  );
+}
