@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
 const BACKEND = () => process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
-const BOT_USERNAME = 'WorkspaceFlowBot';
+const BOT_USERNAME = 'workspace_flow_bot';
 
 export default function TelegramPage() {
   const [userId,    setUserId]    = useState(null);
@@ -187,7 +187,7 @@ export default function TelegramPage() {
             <div className="card" style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {[
                 'Click "Open Telegram Bot →" above.',
-                'Telegram opens with WorkspaceFlowBot — tap Start.',
+                'Telegram opens with @workspace_flow_bot — tap Start.',
                 'Your account links automatically. No codes needed.',
                 'Your morning briefing arrives each day at 8 AM.',
               ].map((text, i) => (
