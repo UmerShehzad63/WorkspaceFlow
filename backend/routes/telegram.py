@@ -160,8 +160,8 @@ async def telegram_disconnect(request: Request):
 @router.get("/status")
 async def telegram_status(request: Request):
     """Return the Telegram connection status for the authenticated user."""
-    user, _ = await _require_pro(request)
-    conn    = await _get_connection(user["id"])
+    user = await _require_auth(request)
+    conn = await _get_connection(user["id"])
 
     if not conn:
         return {"connected": False, "pending": False, "username": None}

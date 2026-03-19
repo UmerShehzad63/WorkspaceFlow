@@ -27,10 +27,20 @@ from jobs.scheduler import start_scheduler, stop_scheduler
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# ── App lifecycle: start/stop scheduler ────────────────────────────────────
+# ── App lifecycle: start/stop scheduler + register Telegram webhook ─────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     start_scheduler()
+
+    # Auto-register the Telegram webhook on every startup so Render deploys
+    # don't require manual re-registration.
+    try:
+        from services.telegram import set_webhook
+        webhook_url = "https://workspaceflow-backend.onrender.com/api/telegram/webhook"
+        await set_webhook(webhook_url)
+    except Exception as e:
+        logger.warning("[Telegram] Webhook registration failed (non-fatal): %s", e)
+
     yield
     stop_scheduler()
 

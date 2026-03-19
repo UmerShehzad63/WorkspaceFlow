@@ -23,6 +23,14 @@ def _ensure_configured():
         )
 
 
+async def set_webhook(url: str) -> None:
+    """Register the webhook URL with the Telegram Bot API."""
+    _ensure_configured()
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        await bot.set_webhook(url=url)
+    logger.info("[Telegram] Webhook registered: %s", url)
+
+
 async def send_message(chat_id: str | int, text: str) -> None:
     """Send a Telegram HTML message (async)."""
     _ensure_configured()
