@@ -631,6 +631,12 @@ def execute_command(intent, access_token, refresh_token, overrides=None):
                 _overrides = overrides or {}
                 creds = _build_creds(access_token, refresh_token)
 
+                # Apply subject/body overrides from confirmed preview edits
+                if _overrides.get("subject"):
+                    subject = _overrides["subject"].strip()
+                if _overrides.get("body"):
+                    body = _overrides["body"].strip()
+
                 # ── Step 1: Resolve recipient ────────────────────────────────
                 if not to:
                     return {"type": "error", "error": "No recipient specified. Please say who to send the email to."}

@@ -28,16 +28,24 @@ function Skeleton({ lines = 3 }) {
   );
 }
 
-// ── Briefing section — with "See more" when >4 urgent items ────────────────
-const ITEM_LIMIT = 4;
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function formatSender(from) {
+  if (!from) return 'Unknown';
+  const match = from.match(/^"?([^"<]+?)"?\s*<[^>]+>$/);
+  return match ? match[1].trim() : from.replace(/<[^>]+>/, '').trim() || from;
+}
 
-function BriefingSection({ label, data, loading, emptyText }) {
-  const [expanded, setExpanded] = useState(false);
+// ── Briefing section — individual email rows ──────────────────────────────
+const EMAIL_LIMIT = 5;
 
-  const allItems   = data?.urgent_items || [];
-  const hasMore    = allItems.length > ITEM_LIMIT;
-  const visible    = expanded ? allItems : allItems.slice(0, ITEM_LIMIT);
-  const hiddenCount = allItems.length - ITEM_LIMIT;
+function BriefingSection({ label, data, emails, loading, emptyText }) {
+  const [expanded,    setExpanded]    = useState(false);
+  const [expandedIdx, setExpandedIdx] = useState(null);
+
+  const allEmails   = emails || [];
+  const hasMore     = allEmails.length > EMAIL_LIMIT;
+  const visible     = expanded ? allEmails : allEmails.slice(0, EMAIL_LIMIT);
+  const hiddenCount = allEmails.length - EMAIL_LIMIT;
 
   return (
     <div style={{ marginBottom: '32px' }}>
@@ -55,21 +63,41 @@ function BriefingSection({ label, data, loading, emptyText }) {
           <Skeleton lines={4} />
         ) : (
           <>
-            {/* ⚡ Priority Items */}
-            <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px' }}>
-              ⚡ Priority Items
-            </h3>
-
-            {allItems.length > 0 ? (
+            {/* Email rows */}
+            {allEmails.length > 0 ? (
               <>
-                <ul style={{ listStyle: 'none', margin: '0 0 4px', padding: 0, display: 'flex', flexDirection: 'column', gap: '7px' }}>
-                  {visible.map((item, i) => (
-                    <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '0.86rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-orange)', flexShrink: 0, marginTop: '7px' }} />
-                      {item}
-                    </li>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '4px' }}>
+                  {visible.map((email, i) => (
+                    <div key={i}>
+                      <button
+                        onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'baseline', gap: '8px',
+                          background: expandedIdx === i ? 'rgba(255,255,255,0.04)' : 'transparent',
+                          border: 'none', cursor: 'pointer', textAlign: 'left',
+                          padding: '7px 10px', borderRadius: '8px', fontSize: '0.86rem',
+                          color: 'var(--text-primary)', lineHeight: 1.5, transition: 'background 0.12s',
+                        }}
+                        onMouseEnter={e => { if (expandedIdx !== i) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                        onMouseLeave={e => { if (expandedIdx !== i) e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <span style={{ flexShrink: 0 }}>📧</span>
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                          {formatSender(email.from)}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>—</span>
+                        <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          &ldquo;{email.subject}&rdquo;
+                        </span>
+                      </button>
+                      {expandedIdx === i && email.snippet && (
+                        <div style={{ padding: '4px 10px 10px 34px', fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                          {email.snippet}
+                        </div>
+                      )}
+                    </div>
                   ))}
-                </ul>
+                </div>
 
                 {hasMore && (
                   <button
@@ -81,7 +109,7 @@ function BriefingSection({ label, data, loading, emptyText }) {
                       textUnderlineOffset: '3px',
                     }}
                   >
-                    {expanded ? 'See less' : `See ${hiddenCount} more…`}
+                    {expanded ? 'Show less' : `Show ${hiddenCount} more…`}
                   </button>
                 )}
                 {!hasMore && <div style={{ marginBottom: '18px' }} />}
@@ -113,7 +141,12 @@ export default function MorningBriefingPage() {
   const [scheduleData,  setScheduleData]  = useState(briefingCache.data?.schedule ?? null);
   const [aiData,        setAiData]        = useState(
     briefingCache.data
-      ? { last_24h: briefingCache.data.last_24h, older: briefingCache.data.older }
+      ? {
+          last_24h:        briefingCache.data.last_24h,
+          older:           briefingCache.data.older,
+          last_24h_emails: briefingCache.data.last_24h_emails || [],
+          older_emails:    briefingCache.data.older_emails    || [],
+        }
       : null
   );
   const [error,         setError]         = useState(null);
@@ -151,7 +184,12 @@ export default function MorningBriefingPage() {
     if (!res.ok) throw new Error(data.detail || 'Briefing fetch failed');
     briefingCache.set(data);
     setScheduleData(data.schedule || []);
-    setAiData({ last_24h: data.last_24h, older: data.older });
+    setAiData({
+      last_24h:        data.last_24h,
+      older:           data.older,
+      last_24h_emails: data.last_24h_emails || [],
+      older_emails:    data.older_emails    || [],
+    });
   };
 
   const load = async (force = false) => {
@@ -291,16 +329,18 @@ export default function MorningBriefingPage() {
       <BriefingSection
         label="Last 24 Hours"
         data={aiData?.last_24h}
+        emails={aiData?.last_24h_emails}
         loading={aiLoading}
-        emptyText="No urgent tasks from the last 24 hours."
+        emptyText="No emails from the last 24 hours."
       />
 
       {/* ── Older ──────────────────────────────────────────────────────────── */}
       <BriefingSection
         label="Older"
         data={aiData?.older}
+        emails={aiData?.older_emails}
         loading={aiLoading}
-        emptyText="No urgent items from older emails."
+        emptyText="No older emails."
       />
 
       {/* ── Email Preview Modal ───────────────────────────────────────────── */}

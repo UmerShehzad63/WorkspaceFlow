@@ -187,6 +187,16 @@ async def get_briefing(request: Request):
         logger.error("[OpenAI] Briefing generation failed: %s", briefing)
         raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Try again shortly.")
 
+    # Attach raw per-email data so the frontend can render individual email rows
+    briefing['last_24h_emails'] = [
+        {'from': e.get('from', ''), 'subject': e.get('subject', ''), 'snippet': e.get('snippet', '')}
+        for e in raw_data.get('last_24h_emails', [])[:20]
+    ]
+    briefing['older_emails'] = [
+        {'from': e.get('from', ''), 'subject': e.get('subject', ''), 'snippet': e.get('snippet', '')}
+        for e in raw_data.get('older_emails', [])[:10]
+    ]
+
     return briefing
 
 
@@ -197,9 +207,10 @@ async def run_command(request: Request):
     user    = await require_auth(request)
     user_id = user["id"]
 
-    data     = await request.json()
-    command  = data.get("command", "").strip()
-    overrides = data.get("overrides") or {}
+    data         = await request.json()
+    command      = data.get("command", "").strip()
+    overrides    = data.get("overrides") or {}
+    preview_only = bool(data.get("preview_only", False))
 
     if not command:
         raise HTTPException(status_code=400, detail="Command cannot be empty")
@@ -228,6 +239,12 @@ async def run_command(request: Request):
 
     if not access_token:
         raise HTTPException(status_code=400, detail="Google account not connected. Please reconnect.")
+
+    # For Gmail Send/Reply: return the parsed intent before executing so the
+    # frontend can show an editable preview modal and let the user confirm.
+    if preview_only and intent.get("service", "").lower() == "gmail" and \
+            intent.get("action", "").lower() in ("send", "reply"):
+        return {"intent": intent, "preview_only": True}
 
     try:
         loop   = asyncio.get_event_loop()

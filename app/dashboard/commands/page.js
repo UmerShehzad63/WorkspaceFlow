@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import styles from './commands.module.css';
 import ResultDisplay from '../components/ResultDisplay';
+import EmailSendPreviewModal from '../components/EmailSendPreviewModal';
 import { useCommand } from '../command-context';
 
 const EXAMPLES = [
@@ -26,8 +27,10 @@ export default function CommandsPage() {
   const [isExecuting,    setIsExecuting]    = useState(false);
   const [history,        setHistory]        = useState([]);
   const [pendingCommand, setPendingCommand] = useState(null); // { command, overrides }
+  const [emailPreview,   setEmailPreview]   = useState(null); // { intent, commandText, overrides }
 
-  const runCommand = async (commandText, overrides = {}) => {
+  // skipPreview=true bypasses the preview step (used when confirming from modal)
+  const runCommand = async (commandText, overrides = {}, skipPreview = false) => {
     setIsExecuting(true);
     setResultState(null);
 
@@ -42,7 +45,7 @@ export default function CommandsPage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ command: commandText, overrides }),
+        body: JSON.stringify({ command: commandText, overrides, preview_only: !skipPreview }),
       });
 
       if (!response.ok) {
@@ -51,6 +54,12 @@ export default function CommandsPage() {
       }
 
       const data = await response.json();
+
+      // Backend wants us to show an email preview before sending
+      if (data.preview_only) {
+        setEmailPreview({ intent: data.intent, commandText, overrides });
+        return;
+      }
 
       if (data.needs_disambiguation) {
         setPendingCommand({ command: commandText, overrides });
@@ -85,6 +94,20 @@ export default function CommandsPage() {
     const merged = { ...pendingCommand.overrides, ...extraOverrides };
     await runCommand(pendingCommand.command, merged);
   };
+
+  const handlePreviewSend = async ({ to, subject, body }) => {
+    if (!emailPreview) return;
+    const overrides = {
+      ...(emailPreview.overrides || {}),
+      recipient_email: to,
+      subject,
+      body,
+    };
+    setEmailPreview(null);
+    await runCommand(emailPreview.commandText, overrides, true);
+  };
+
+  const handlePreviewCancel = () => setEmailPreview(null);
 
   const handleExample = (example) => {
     setCommand(example);  // syncs to global context too
@@ -229,6 +252,15 @@ export default function CommandsPage() {
           </div>
         </div>
       </div>
+
+      {/* Email send preview modal */}
+      {emailPreview && (
+        <EmailSendPreviewModal
+          intent={emailPreview.intent}
+          onSend={handlePreviewSend}
+          onCancel={handlePreviewCancel}
+        />
+      )}
     </div>
   );
 }

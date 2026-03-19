@@ -17,6 +17,7 @@ const sidebarItems = [
   { section: 'Tools' },
   { label: 'Command Bar',  href: '/dashboard/commands',  icon: '💬', badge: 'PRO' },
   { label: 'Automations',  href: '/dashboard/rules',     icon: '🔄', badge: 'PRO' },
+  { label: 'Telegram',     href: '/dashboard/telegram',  icon: '✈️', badge: 'PRO' },
   { section: 'Account' },
   { label: 'Settings',     href: '/dashboard/settings',  icon: '⚙️' },
   { label: 'Team',         href: '/dashboard/team',      icon: '👥', badge: 'TEAM' },
