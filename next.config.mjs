@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Produces a self-contained Node.js server in .next/standalone/
-  // Required for Docker deployment — this is what the container runs.
-  output: 'standalone',
+  // output: 'standalone' is for Docker/Fly.io only — NOT needed for Vercel.
+  // Vercel handles the build and serving itself.
 };
 
 export default nextConfig;
