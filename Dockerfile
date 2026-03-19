@@ -34,7 +34,7 @@ RUN npm ci --no-audit --prefer-offline
 COPY app/            ./app/
 COPY lib/            ./lib/
 COPY public/         ./public/
-COPY middleware.js   ./
+COPY proxy.js        ./
 COPY next.config.mjs ./
 
 RUN npm run build
