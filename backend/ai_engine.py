@@ -92,6 +92,49 @@ OLDER EMAILS ({len(old)}): {json.dumps([{'from': e['from'], 'subject': e['subjec
     return await _call_openai(messages)
 
 
+async def generate_email_content(command: str, to: str, context: str = "") -> dict:
+    """
+    Generate a complete professional email (subject + body) from the user's
+    natural language command.  Called when parse_command_intent omits subject
+    or body — which is intentional for commands like "email X about Y".
+
+    context: optional extra data (calendar events, snippets, etc.) to ground
+             the generation in real workspace data.
+    """
+    from datetime import datetime
+    today = datetime.now().strftime("%A, %B %d, %Y")
+
+    context_block = f"\nWorkspace context for this email:\n{context}\n" if context else ""
+
+    prompt = f"""Generate a complete, professional email based on this request.
+
+Request: {command}
+Recipient: {to}
+Today: {today}{context_block}
+
+Return ONLY this JSON (no other text):
+{{
+  "subject": "Concise, specific subject line",
+  "body": "Full email body — plain text, no markdown, professional tone"
+}}
+
+Rules:
+- Write a specific, ready-to-send email. Never use placeholder text.
+- If the request mentions calendar events, tasks, or "today's plan", use the
+  provided context to list the actual items in the body.
+- If no context is provided for calendar-related requests, write a polite
+  request for the information instead of inventing events.
+- Keep the body concise (3–8 sentences) unless detail is clearly needed.
+- Start the body with "Hi," or a direct statement — not "Dear [Name]".
+"""
+
+    messages = [
+        {"role": "system", "content": "You are an executive assistant. Generate professional emails. Return valid JSON only."},
+        {"role": "user", "content": prompt},
+    ]
+    return await _call_openai(messages)
+
+
 async def parse_command_intent(command: str):
     prompt = f"""Parse this natural language workspace command into a structured action.
 

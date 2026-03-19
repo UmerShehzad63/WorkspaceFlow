@@ -254,6 +254,18 @@ async def run_command(request: Request):
     # frontend can show an editable preview modal and let the user confirm.
     if preview_only and intent.get("service", "").lower() == "gmail" and \
             intent.get("action", "").lower() in ("send", "reply"):
+        params  = intent.setdefault("parameters", {})
+        subject = (params.get("subject") or "").strip()
+        body    = (params.get("body") or params.get("message") or params.get("content") or "").strip()
+        to      = (params.get("to") or "").strip()
+        if not subject or not body:
+            from ai_engine import generate_email_content
+            generated = await generate_email_content(command, to)
+            if not subject and generated.get("subject"):
+                params["subject"] = generated["subject"]
+            if not body and generated.get("body"):
+                params["body"] = generated["body"]
+            intent["parameters"] = params
         return {"intent": intent, "preview_only": True}
 
     try:

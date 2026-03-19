@@ -2,12 +2,11 @@
 Telegram API routes — multi-step conversation engine.
 
 Bot conversation states per chat_id (in-memory):
-    wait_subject  — asked for subject, waiting for reply
-    wait_body     — asked for body, waiting for reply
-    wait_confirm  — showing email preview, waiting for YES/NO
+    wait_confirm  — showing AI-generated email preview, waiting for YES/EDIT/NO
+    wait_edit     — user requested edits; waiting for SUBJECT:/BODY: reply
 
 NL flow: any non-slash message → AI command engine (same as dashboard).
-Gmail Send goes through: to → subject → body → preview → YES/NO → send.
+Gmail Send: AI auto-generates subject + body → preview → YES/EDIT/NO → send.
 """
 import asyncio
 import functools
@@ -33,7 +32,7 @@ router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
 # ── Per-chat conversation state ──────────────────────────────────────────────
 # chat_id → {"state": str, "intent": dict, "user_id": str}
-# state values: "wait_subject" | "wait_body" | "wait_confirm"
+# state values: "wait_confirm" | "wait_edit"
 _conv: dict = {}
 
 
@@ -284,37 +283,37 @@ def _get_body(params: dict) -> str:
     ).strip()
 
 
-async def _advance_email_send(chat_id: str, intent: dict, user_id: str):
+async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
+                              original_command: str = ""):
     """
-    Step through the email compose flow:
-      missing subject  → ask for subject  (wait_subject)
-      missing body     → ask for body     (wait_body)
-      both present     → show full preview (wait_confirm)
+    Auto-generate subject + body via AI from the original command, then show
+    a full preview so the user can confirm, edit, or cancel.
     """
     params  = intent.setdefault("parameters", {})
     to      = (params.get("to") or "").strip()
     subject = (params.get("subject") or "").strip()
     body    = _get_body(params)
 
-    # Normalise params so execute_command sees consistent keys
-    params["body"]    = body
-    params["subject"] = subject
-
     if not to:
         _conv.pop(chat_id, None)
         await send_message(chat_id, "📧 Who should I send this to? (Enter an email address)")
         return
 
-    if not subject:
-        _conv[chat_id] = {"state": "wait_subject", "intent": intent, "user_id": user_id}
-        await send_message(chat_id, "📝 What should the <b>subject line</b> be?")
-        return
+    if not subject or not body:
+        from ai_engine import generate_email_content
+        try:
+            generated = await generate_email_content(original_command or to, to)
+            if not subject and generated.get("subject"):
+                subject = generated["subject"]
+                params["subject"] = subject
+            if not body and generated.get("body"):
+                body = generated["body"]
+                params["body"] = body
+        except Exception:
+            logger.exception("[Telegram] Email generation failed for chat_id=%s", chat_id)
 
-    if not body:
-        _conv[chat_id] = {"state": "wait_body", "intent": intent, "user_id": user_id}
-        await send_message(chat_id, "✏️ What should the <b>email body</b> say?")
-        return
-
+    params["body"]    = body
+    params["subject"] = subject
     await _show_email_preview(chat_id, intent, user_id)
 
 
@@ -330,7 +329,7 @@ async def _show_email_preview(chat_id: str, intent: dict, user_id: str):
         f"<b>To:</b> {to}\n"
         f"<b>Subject:</b> {subject}\n"
         f"<b>Body:</b>\n{body_preview}\n\n"
-        "Reply <b>YES</b> to send or <b>NO</b> to cancel."
+        "Reply <b>YES</b> to send, <b>EDIT</b> to modify, or <b>NO</b> to cancel."
     )
     _conv[chat_id] = {"state": "wait_confirm", "intent": intent, "user_id": user_id}
     await send_message(chat_id, preview)
@@ -404,9 +403,9 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
     service = (intent.get("service") or "").lower()
     action  = (intent.get("action")  or "").lower()
 
-    # Gmail Send/Reply → collect missing fields step-by-step
+    # Gmail Send/Reply → AI generates subject+body, then shows preview
     if service == "gmail" and action in ("send", "reply"):
-        await _advance_email_send(chat_id, intent, user_id)
+        await _advance_email_send(chat_id, intent, user_id, text)
         return
 
     # All other commands — execute and return result
@@ -617,33 +616,44 @@ async def telegram_webhook(request: Request):
         answer  = text.strip()
         upper   = answer.upper()
 
-        if state == "wait_subject":
-            params["subject"] = answer
-            # Check if body is also missing
-            if not _get_body(params):
-                _conv[chat_id]["state"] = "wait_body"
-                await send_message(chat_id, "✏️ What should the <b>email body</b> say?")
-            else:
-                await _show_email_preview(chat_id, intent, user_id)
-            return JSONResponse({"ok": True})
-
-        if state == "wait_body":
-            params["body"] = answer
-            await _show_email_preview(chat_id, intent, user_id)
-            return JSONResponse({"ok": True})
-
         if state == "wait_confirm":
-            _conv.pop(chat_id, None)
             if upper in ("YES", "Y", "SEND", "OK", "CONFIRM", "YEP", "YUP", "SURE"):
+                _conv.pop(chat_id, None)
                 await _execute_email_send(chat_id, intent, access_token, refresh_token)
+            elif upper == "EDIT":
+                _conv[chat_id]["state"] = "wait_edit"
+                await send_message(
+                    chat_id,
+                    "✏️ <b>What would you like to change?</b>\n\n"
+                    "Reply with one or both:\n"
+                    "<code>SUBJECT: your new subject</code>\n"
+                    "<code>BODY: your new body text</code>",
+                )
             elif upper in ("NO", "N", "CANCEL", "STOP", "NOPE"):
+                _conv.pop(chat_id, None)
                 await send_message(chat_id, "❌ Cancelled.")
             else:
-                # Treat as new NL command; discard old pending
+                # Treat as a new NL command; discard old pending
+                _conv.pop(chat_id, None)
                 if not access_token:
                     await send_message(chat_id, "⚠️ Google account not connected.")
                     return JSONResponse({"ok": True})
                 await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
+            return JSONResponse({"ok": True})
+
+        if state == "wait_edit":
+            # Parse SUBJECT: and/or BODY: from user reply
+            subject_match = re.search(r'(?im)^SUBJECT:\s*(.+?)(?=\nBODY:|$)', answer, re.DOTALL)
+            body_match    = re.search(r'(?im)^BODY:\s*(.+)', answer, re.DOTALL)
+            if subject_match:
+                params["subject"] = subject_match.group(1).strip()
+            if body_match:
+                params["body"] = body_match.group(1).strip()
+            if not subject_match and not body_match:
+                # No keywords — treat entire reply as body replacement
+                params["body"] = answer
+            _conv.pop(chat_id, None)
+            await _show_email_preview(chat_id, intent, user_id)
             return JSONResponse({"ok": True})
 
     # ── Slash commands ────────────────────────────────────────────────────────
