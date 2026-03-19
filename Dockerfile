@@ -36,6 +36,7 @@ COPY lib/            ./lib/
 COPY public/         ./public/
 COPY proxy.js        ./
 COPY next.config.mjs ./
+COPY jsconfig.json   ./
 
 RUN npm run build
 
