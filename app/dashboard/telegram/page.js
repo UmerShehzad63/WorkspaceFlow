@@ -1,15 +1,53 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
 const BACKEND = () => process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 const BOT_USERNAME = 'workspace_flow_bot';
+const POLL_INTERVAL = 3000;   // 3 s between status checks
+const POLL_TIMEOUT  = 120000; // stop polling after 2 min
 
 export default function TelegramPage() {
   const [userId,    setUserId]    = useState(null);
   const [status,    setStatus]    = useState(null);  // null = loading
   const [loading,   setLoading]   = useState(false);
   const [msg,       setMsg]       = useState(null);  // { ok, text }
+  const [polling,   setPolling]   = useState(false); // true while awaiting link
+
+  const pollRef    = useRef(null);
+  const tokenRef   = useRef(null); // cached access token for polling
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setPolling(false);
+  };
+
+  const startPolling = () => {
+    if (pollRef.current) return; // already polling
+    setPolling(true);
+    // Auto-stop after POLL_TIMEOUT
+    const stopAt = Date.now() + POLL_TIMEOUT;
+
+    pollRef.current = setInterval(async () => {
+      if (Date.now() > stopAt) { stopPolling(); return; }
+      try {
+        const res  = await fetch(`${BACKEND()}/api/telegram/status`, {
+          headers: { Authorization: `Bearer ${tokenRef.current}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.connected) {
+            setStatus(data);
+            setMsg({ ok: true, text: '✅ Connected! You\'ll receive briefings here.' });
+            stopPolling();
+          }
+        }
+      } catch { /* silent */ }
+    }, POLL_INTERVAL);
+  };
 
   // Load user ID and connection status on mount
   useEffect(() => {
@@ -17,6 +55,7 @@ export default function TelegramPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       setUserId(session.user.id);
+      tokenRef.current = session.access_token;
 
       try {
         const res = await fetch(`${BACKEND()}/api/telegram/status`, {
@@ -33,6 +72,8 @@ export default function TelegramPage() {
       }
     };
     init();
+    return stopPolling; // cleanup on unmount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const telegramUrl = userId
@@ -41,6 +82,9 @@ export default function TelegramPage() {
 
   const handleOpenBot = () => {
     window.open(telegramUrl, '_blank', 'noopener,noreferrer');
+    // Start polling for connection — the bot will link the account automatically
+    // via the ?start=USER_ID payload; we detect it and update the UI.
+    if (!status?.connected) startPolling();
   };
 
   const handleDisconnect = async () => {
@@ -113,12 +157,12 @@ export default function TelegramPage() {
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: '6px',
               padding: '5px 14px', borderRadius: '999px', fontSize: '0.78rem', fontWeight: 700,
-              background: isConnected ? 'rgba(52,211,153,0.1)'  : 'rgba(255,255,255,0.05)',
-              border:     isConnected ? '1px solid rgba(52,211,153,0.25)' : '1px solid var(--border-color)',
-              color:      isConnected ? 'var(--accent-green)' : 'var(--text-muted)',
+              background: isConnected ? 'rgba(52,211,153,0.1)' : polling ? 'rgba(96,165,250,0.1)' : 'rgba(255,255,255,0.05)',
+              border:     isConnected ? '1px solid rgba(52,211,153,0.25)' : polling ? '1px solid rgba(96,165,250,0.25)' : '1px solid var(--border-color)',
+              color:      isConnected ? 'var(--accent-green)' : polling ? 'var(--accent-blue)' : 'var(--text-muted)',
             }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isConnected ? 'var(--accent-green)' : 'var(--text-muted)', display: 'inline-block' }} />
-              {status === null ? 'Checking…' : isConnected ? 'Connected' : 'Not connected'}
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isConnected ? 'var(--accent-green)' : polling ? 'var(--accent-blue)' : 'var(--text-muted)', display: 'inline-block' }} />
+              {status === null ? 'Checking…' : isConnected ? 'Connected' : polling ? 'Waiting for link…' : 'Not connected'}
             </span>
           </div>
 
@@ -129,7 +173,7 @@ export default function TelegramPage() {
               style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px', marginBottom: '12px' }}
               onClick={handleOpenBot}
             >
-              Open Telegram Bot →
+              {polling ? 'Waiting for Telegram… (click to retry)' : 'Open Telegram Bot →'}
             </button>
           )}
 

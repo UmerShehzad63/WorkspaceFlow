@@ -218,16 +218,47 @@ async def telegram_webhook(request: Request):
     raw_cmd = text.split()[0].lstrip("/").lower()
     command = raw_cmd.split("@")[0]
 
-    # ── /start ─────────────────────────────────────────────────────────────
+    # ── /start [USER_ID] ───────────────────────────────────────────────────
     if command == "start":
-        await send_message(
-            chat_id,
-            "👋 <b>Welcome to WorkspaceFlow!</b>\n\n"
-            "To connect your account:\n"
-            "1. Open your WorkspaceFlow dashboard\n"
-            "2. Click <b>Connect Telegram</b>\n"
-            "3. Send the code shown: <code>/verify YOUR_CODE</code>",
-        )
+        # The dashboard links to t.me/workspace_flow_bot?start=USER_ID
+        # Telegram delivers this as "/start USER_ID" — auto-link if present.
+        parts   = text.split(maxsplit=1)
+        payload = parts[1].strip() if len(parts) > 1 else None
+
+        if payload:
+            now_iso = datetime.now(tz.utc).isoformat()
+            try:
+                await _set_connection(payload, {
+                    "chat_id":           chat_id,
+                    "username":          username,
+                    "verified_at":       now_iso,
+                    "verification_code": None,
+                })
+                await send_message(
+                    chat_id,
+                    f"✅ <b>Your account is linked!</b>\n\n"
+                    "You'll receive your daily briefing here at your configured time.\n\n"
+                    "/briefing — full morning briefing\n"
+                    "/summary — inbox summary\n"
+                    "/tasks — priority items\n"
+                    "/status — account info\n"
+                    "/help — all commands",
+                )
+            except Exception:
+                logger.exception("[Telegram] Auto-link failed for user_id=%s", payload)
+                await send_message(
+                    chat_id,
+                    "⚠️ Something went wrong linking your account. "
+                    "Please try again from the WorkspaceFlow dashboard.",
+                )
+        else:
+            # No payload — show simple fallback
+            await send_message(
+                chat_id,
+                "👋 <b>Welcome to WorkspaceFlow!</b>\n\n"
+                "Open your WorkspaceFlow dashboard and click "
+                "<b>Open Telegram Bot →</b> to link your account automatically.",
+            )
         return JSONResponse({"ok": True})
 
     # ── /verify CODE ───────────────────────────────────────────────────────

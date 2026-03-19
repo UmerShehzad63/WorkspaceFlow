@@ -23,6 +23,11 @@ from apscheduler.triggers.cron import CronTrigger
 logger    = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
+# In-memory set of user_ids that have already received the "plan expired"
+# notification. Resets on restart, but that's acceptable — at worst a user
+# gets the message once more after a deploy. Prevents spamming it daily.
+_expiry_notified: set = set()
+
 
 # ── Supabase helpers ────────────────────────────────────────────────────────
 
@@ -57,15 +62,14 @@ async def _fetch_telegram_users() -> list:
         return []
 
     # Step 2 — fetch profiles for these users (Google tokens + briefing prefs)
+    # Fetch ALL plans — the job itself decides whether to send or notify of expiry.
     user_ids     = [c["user_id"] for c in connections]
-    # PostgREST supports filtering on a list with in.(...)
     id_list      = ",".join(user_ids)
     profile_url  = (
         f"{supabase_url}/rest/v1/profiles"
         f"?id=in.({id_list})"
         f"&google_access_token=not.is.null"
-        f"&plan=in.(pro,team)"
-        f"&select=id,google_access_token,google_refresh_token,briefing_time,timezone"
+        f"&select=id,plan,google_access_token,google_refresh_token,briefing_time,timezone"
     )
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -152,19 +156,45 @@ async def send_daily_briefings():
     if not users:
         return
 
+    from services.telegram import format_briefing_telegram, send_message
+
     for user in users:
         if not _is_due(user, now_utc):
             continue
 
-        user_id       = user["user_id"]
-        chat_id       = user["chat_id"]
+        user_id = user["user_id"]
+        chat_id = user["chat_id"]
+        plan    = (user.get("plan") or "free").lower()
+
+        # ── Subscription check (once per day at briefing time) ─────────────
+        if plan not in ("pro", "team"):
+            # User had Telegram connected but is no longer on a paid plan.
+            # Send ONE expiry notification, then stay silent forever.
+            if user_id not in _expiry_notified and user.get("last_briefing_sent"):
+                try:
+                    await send_message(
+                        chat_id,
+                        "⚠️ <b>Your Pro subscription has ended.</b>\n\n"
+                        "Upgrade to continue receiving daily Telegram briefings:\n"
+                        "https://workspace-flow.vercel.app/pricing",
+                    )
+                    _expiry_notified.add(user_id)
+                    logger.info("[Scheduler] Expiry notification sent to user %s", user_id)
+                except Exception:
+                    logger.exception("[Scheduler] Failed to send expiry notification to user %s", user_id)
+            # Either way — skip the briefing
+            continue
+
+        # ── Active pro/team user — send briefing ───────────────────────────
+        # If they re-subscribed, clear any previous expiry notification record
+        _expiry_notified.discard(user_id)
+
         access_token  = user["google_access_token"]
         refresh_token = user.get("google_refresh_token")
 
         try:
             from google_service import fetch_morning_briefing_data
             from ai_engine import generate_briefing_summary
-            from services.telegram import format_briefing_telegram, send_message
 
             loop     = asyncio.get_event_loop()
             raw_data = await loop.run_in_executor(
