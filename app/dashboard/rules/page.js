@@ -693,12 +693,27 @@ export default function AutomationsPage() {
   // Request Automation modal + toast
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [userEmail, setUserEmail] = useState('');
-  const [toast, setToast] = useState(null); // {message}
+  const [toast, setToast] = useState(null); // {message, error?}
+  const [userPlan, setUserPlan] = useState('free');
 
-  // Load user email for the request form
+  // Automation limits per plan
+  const getAutomationLimit = (plan) => {
+    if (plan === 'pro_plus') return Infinity;
+    if (['pro', 'trialing', 'pro_trial'].includes(plan)) return 5;
+    return 0; // free
+  };
+
+  // Load user email + plan
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user?.email) setUserEmail(session.user.email);
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user) return;
+      if (session.user.email) setUserEmail(session.user.email);
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('plan')
+        .eq('id', session.user.id)
+        .single();
+      if (profile?.plan) setUserPlan(profile.plan.toLowerCase());
     });
   }, []);
 
@@ -712,6 +727,16 @@ export default function AutomationsPage() {
   // ── Handlers ───────────────────────────────────────────────────────────
 
   const handleSaveAutomation = (data) => {
+    const limit = getAutomationLimit(userPlan);
+    if (automations.length >= limit) {
+      setSetupTemplate(null);
+      if (limit === 0) {
+        setToast({ message: 'Automations require a Pro plan. Upgrade to get started.', error: true });
+      } else {
+        setToast({ message: `You've reached the ${limit}-automation limit on Pro. Upgrade to Pro Plus for unlimited.`, error: true });
+      }
+      return;
+    }
     const newAuto = {
       id: Date.now(),
       ...data,
@@ -811,6 +836,23 @@ export default function AutomationsPage() {
         <div>
           <h1>Automations</h1>
           <p>Set-and-forget automations that run on schedule.</p>
+          {(() => {
+            const limit = getAutomationLimit(userPlan);
+            if (limit === 0) return (
+              <p style={{ color: '#f59e0b', fontSize: '0.8rem', marginTop: '4px' }}>
+                ⚠️ Automations require a Pro plan. <a href="/pricing" style={{ color: 'var(--accent-blue)' }}>Upgrade →</a>
+              </p>
+            );
+            if (limit !== Infinity) return (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>
+                {automations.length}/{limit} automations used
+                {automations.length >= limit && (
+                  <> · <a href="/pricing" style={{ color: 'var(--accent-blue)' }}>Upgrade to Pro Plus for unlimited</a></>
+                )}
+              </p>
+            );
+            return null;
+          })()}
         </div>
         <button className="btn btn-primary" onClick={() => setRequestModalOpen(true)}>
           + New Automation
@@ -1018,8 +1060,8 @@ export default function AutomationsPage() {
 
       {/* Toast */}
       {toast && (
-        <div className={styles.toast}>
-          <span className={styles.toastIcon}>✓</span>
+        <div className={styles.toast} style={toast.error ? { background: 'rgba(239,68,68,0.95)', border: '1px solid rgba(239,68,68,0.3)' } : undefined}>
+          <span className={styles.toastIcon}>{toast.error ? '⚠️' : '✓'}</span>
           {toast.message}
         </div>
       )}

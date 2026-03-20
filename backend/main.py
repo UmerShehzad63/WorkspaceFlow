@@ -250,22 +250,65 @@ async def run_command(request: Request):
     if not access_token:
         raise HTTPException(status_code=400, detail="Google account not connected. Please reconnect.")
 
-    # For Gmail Send/Reply: return the parsed intent before executing so the
-    # frontend can show an editable preview modal and let the user confirm.
+    # For Gmail Send/Reply: resolve recipient → generate content → preview modal.
     if preview_only and intent.get("service", "").lower() == "gmail" and \
             intent.get("action", "").lower() in ("send", "reply"):
-        params  = intent.setdefault("parameters", {})
+        params          = intent.setdefault("parameters", {})
+        to              = (params.get("to") or "").strip()
+        recipient_email = (overrides.get("recipient_email") or "").strip()
+
+        # ── Step 1: Resolve recipient ──────────────────────────────────────
+        if recipient_email:
+            to = recipient_email
+            params["to"] = to
+        elif to and "@" not in to:
+            from command_executor import find_recipient_candidates, _build_creds
+            loop = asyncio.get_event_loop()
+            creds = await loop.run_in_executor(
+                None, functools.partial(_build_creds, access_token, refresh_token)
+            )
+            candidates = await loop.run_in_executor(
+                None, functools.partial(find_recipient_candidates, creds, to)
+            )
+            if not candidates:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"No email found for '{to}' in your Gmail history. Please specify their email address directly.",
+                )
+            if len(candidates) == 1:
+                to = candidates[0]["email"]
+                params["to"] = to
+            else:
+                return {
+                    "intent": intent,
+                    "result": {
+                        "type": "needs_disambiguation",
+                        "kind": "recipient",
+                        "query": params.get("to", to),
+                        "candidates": candidates,
+                        "current_overrides": overrides,
+                    },
+                    "preview_only": False,
+                    "needs_disambiguation": True,
+                }
+
+        # ── Step 2: Generate email content ────────────────────────────────
         subject = (params.get("subject") or "").strip()
         body    = (params.get("body") or params.get("message") or params.get("content") or "").strip()
-        to      = (params.get("to") or "").strip()
         if not subject or not body:
             from ai_engine import generate_email_content
-            generated = await generate_email_content(command, to)
+            meta        = user.get("user_metadata") or {}
+            sender_name = (meta.get("full_name") or meta.get("name") or "").strip()
+            if not sender_name:
+                sender_name = (user.get("email") or "").split("@")[0]
+            generated = await generate_email_content(command, to, sender_name=sender_name)
             if not subject and generated.get("subject"):
                 params["subject"] = generated["subject"]
             if not body and generated.get("body"):
                 params["body"] = generated["body"]
-            intent["parameters"] = params
+        intent["parameters"] = params
+
+        # ── Step 3: Return for preview ────────────────────────────────────
         return {"intent": intent, "preview_only": True}
 
     try:
@@ -347,8 +390,8 @@ async def send_preview(request: Request):
 
     loop = asyncio.get_event_loop()
 
-    # Priority 1: Telegram (Pro/Team only, if connected)
-    if plan in ("pro", "team"):
+    # Priority 1: Telegram (Pro/Pro Plus/trial only, if connected)
+    if plan in ("pro", "pro_plus", "trialing", "pro_trial"):
         tg_conn_url = (
             f"{supabase_url}/rest/v1/telegram_connections"
             f"?user_id=eq.{user_id}"

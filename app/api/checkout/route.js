@@ -6,7 +6,7 @@ import stripe from '@/lib/stripe';
 // Whitelist of valid price IDs to prevent manipulation
 const VALID_PRICE_IDS = [
   process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID,
-  process.env.NEXT_PUBLIC_STRIPE_TEAM_PRICE_ID,
+  process.env.NEXT_PUBLIC_STRIPE_PRO_PLUS_PRICE_ID,
 ].filter(Boolean);
 
 export async function POST(request) {

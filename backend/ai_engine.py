@@ -92,24 +92,25 @@ OLDER EMAILS ({len(old)}): {json.dumps([{'from': e['from'], 'subject': e['subjec
     return await _call_openai(messages)
 
 
-async def generate_email_content(command: str, to: str, context: str = "") -> dict:
+async def generate_email_content(command: str, to: str, context: str = "", sender_name: str = "") -> dict:
     """
     Generate a complete professional email (subject + body) from the user's
-    natural language command.  Called when parse_command_intent omits subject
-    or body — which is intentional for commands like "email X about Y".
+    natural language command.
 
-    context: optional extra data (calendar events, snippets, etc.) to ground
-             the generation in real workspace data.
+    sender_name: the sender's real name for sign-off (from Google/Supabase profile).
+    context: optional extra data (calendar events, snippets, etc.).
     """
     from datetime import datetime
     today = datetime.now().strftime("%A, %B %d, %Y")
 
     context_block = f"\nWorkspace context for this email:\n{context}\n" if context else ""
+    sign_off = f"Best regards,\n{sender_name}" if sender_name else "Best regards"
 
     prompt = f"""Generate a complete, professional email based on this request.
 
 Request: {command}
 Recipient: {to}
+Sender name: {sender_name or "(unknown — sign with 'Best regards' only, no name)"}
 Today: {today}{context_block}
 
 Return ONLY this JSON (no other text):
@@ -119,7 +120,9 @@ Return ONLY this JSON (no other text):
 }}
 
 Rules:
-- Write a specific, ready-to-send email. Never use placeholder text.
+- Write a specific, ready-to-send email.
+- NEVER use bracket placeholders: no [Your Name], [Your Position], [Your Contact Information], [Name], or any [bracketed text].
+- Sign the email exactly with: "{sign_off}" — use the actual name above if provided.
 - If the request mentions calendar events, tasks, or "today's plan", use the
   provided context to list the actual items in the body.
 - If no context is provided for calendar-related requests, write a polite
@@ -129,7 +132,7 @@ Rules:
 """
 
     messages = [
-        {"role": "system", "content": "You are an executive assistant. Generate professional emails. Return valid JSON only."},
+        {"role": "system", "content": "You are an executive assistant. Generate professional emails. Return valid JSON only. Never use bracket placeholders like [Your Name]."},
         {"role": "user", "content": prompt},
     ]
     return await _call_openai(messages)

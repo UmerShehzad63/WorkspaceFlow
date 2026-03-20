@@ -167,7 +167,7 @@ async def send_daily_briefings():
         plan    = (user.get("plan") or "free").lower()
 
         # ── Subscription check (once per day at briefing time) ─────────────
-        if plan not in ("pro", "team"):
+        if plan not in ("pro", "pro_plus", "trialing", "pro_trial"):
             # User had Telegram connected but is no longer on a paid plan.
             # Send ONE expiry notification, then stay silent forever.
             if user_id not in _expiry_notified and user.get("last_briefing_sent"):

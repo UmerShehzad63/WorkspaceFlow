@@ -31,8 +31,8 @@ async function handleCheckout(priceId, setLoading) {
 export default function PricingPage() {
   const [loading, setLoading] = useState(null);
 
-  const PRO_PRICE_ID = process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID;
-  const TEAM_PRICE_ID = process.env.NEXT_PUBLIC_STRIPE_TEAM_PRICE_ID;
+  const PRO_PRICE_ID      = process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID;
+  const PRO_PLUS_PRICE_ID = process.env.NEXT_PUBLIC_STRIPE_PRO_PLUS_PRICE_ID;
 
   return (
     <>
@@ -78,7 +78,7 @@ export default function PricingPage() {
                 <li><span className="check">✓</span> Related docs &amp; emails per meeting</li>
                 <li><span className="check">✓</span> Priority email detection</li>
                 <li><span className="check">✓</span> Natural language command bar</li>
-                <li><span className="check">✓</span> Unlimited automated rules</li>
+                <li><span className="check">✓</span> Up to 5 automated rules</li>
                 <li><span className="check">✓</span> Custom delivery time</li>
                 <li><span className="check">✓</span> Telegram delivery</li>
                 <li><span className="check">✓</span> Skip weekends option</li>
@@ -93,13 +93,14 @@ export default function PricingPage() {
               </button>
             </div>
 
-            {/* Team */}
+            {/* Pro Plus */}
             <div className="pricing-card">
-              <div className="pricing-tier">Team</div>
-              <div className="pricing-amount">$19<span>/user/mo</span></div>
-              <p className="pricing-desc">For teams of 3-10 people with shared needs</p>
+              <div className="pricing-tier">Pro Plus</div>
+              <div className="pricing-amount">$19<span>/mo</span></div>
+              <p className="pricing-desc">Unlimited power for power users and teams</p>
               <ul className="pricing-features">
                 <li><span className="check">✓</span> Everything in Pro</li>
+                <li><span className="check">✓</span> <strong>Unlimited</strong> automated rules</li>
                 <li><span className="check">✓</span> Multiple team members</li>
                 <li><span className="check">✓</span> Shared automations</li>
                 <li><span className="check">✓</span> Shared command history</li>
@@ -108,12 +109,12 @@ export default function PricingPage() {
                 <li><span className="check">✓</span> Priority support</li>
               </ul>
               <button
-                onClick={() => handleCheckout(TEAM_PRICE_ID, setLoading)}
-                disabled={loading === TEAM_PRICE_ID}
+                onClick={() => handleCheckout(PRO_PLUS_PRICE_ID, setLoading)}
+                disabled={loading === PRO_PLUS_PRICE_ID}
                 className="btn btn-secondary"
                 style={{ width: '100%' }}
               >
-                {loading === TEAM_PRICE_ID ? 'Redirecting...' : 'Get Team Plan →'}
+                {loading === PRO_PLUS_PRICE_ID ? 'Redirecting...' : 'Get Pro Plus →'}
               </button>
             </div>
           </div>
@@ -131,7 +132,7 @@ export default function PricingPage() {
                   <th>Feature</th>
                   <th>Free</th>
                   <th className={styles.highlighted}>Pro</th>
-                  <th>Team</th>
+                  <th>Pro Plus</th>
                 </tr>
               </thead>
               <tbody>
@@ -141,7 +142,7 @@ export default function PricingPage() {
                 <tr><td>AI inbox summary</td><td>1 sentence</td><td className={styles.highlighted}>Full</td><td>Full</td></tr>
                 <tr><td>Priority detection</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>Command bar</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
-                <tr><td>Automated rules</td><td>❌</td><td className={styles.highlighted}>Unlimited</td><td>Unlimited</td></tr>
+                <tr><td>Automated rules</td><td>❌</td><td className={styles.highlighted}>Up to 5</td><td>Unlimited</td></tr>
                 <tr><td>Custom delivery time</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>Telegram delivery</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>Skip weekends</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
@@ -171,7 +172,7 @@ export default function PricingPage() {
             </div>
             <div className={styles.faqItem}>
               <h3>Can I cancel anytime?</h3>
-              <p>Yes! Cancel your Pro or Team subscription at any time. You&apos;ll keep access until the end of your current billing period, then switch to Free.</p>
+              <p>Yes! Cancel your Pro or Pro Plus subscription at any time. You&apos;ll keep access until the end of your current billing period, then switch to Free.</p>
             </div>
             <div className={styles.faqItem}>
               <h3>Is my data secure?</h3>

@@ -20,7 +20,7 @@ const sidebarItems = [
   { label: 'Telegram',     href: '/dashboard/telegram',  icon: '✈️', badge: 'PRO' },
   { section: 'Account' },
   { label: 'Settings',     href: '/dashboard/settings',  icon: '⚙️' },
-  { label: 'Team',         href: '/dashboard/team',      icon: '👥', badge: 'TEAM' },
+  { label: 'Team',         href: '/dashboard/team',      icon: '👥', badge: 'PRO_PLUS' },
 ];
 
 // ── Command result overlay ──────────────────────────────────────────────────
@@ -167,8 +167,8 @@ export default function DashboardLayout({ children }) {
                       <span className="icon">{item.icon}</span>
                       <span style={{ flex: 1 }}>{item.label}</span>
                       {item.badge && (
-                        <span className={`badge ${item.badge === 'TEAM' ? 'badge-team' : 'badge-pro'}`} style={{ fontSize: '0.6rem', padding: '1px 6px' }}>
-                          {item.badge}
+                        <span className="badge badge-pro" style={{ fontSize: '0.6rem', padding: '1px 6px' }}>
+                          {item.badge === 'PRO_PLUS' ? 'PRO+' : item.badge}
                         </span>
                       )}
                     </Link>

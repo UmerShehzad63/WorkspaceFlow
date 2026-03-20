@@ -26,6 +26,15 @@ export default function SetupPage() {
   const [searchValue, setSearchValue] = useState('');
   const [delivery, setDelivery] = useState('email');
   const [saving, setSaving] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
+
+  useState(() => {
+    import('@/lib/supabase').then(({ supabase }) => {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user?.email) setUserEmail(session.user.email);
+      });
+    });
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -116,7 +125,7 @@ export default function SetupPage() {
                 <div>
                   <strong style={{ display: 'block', fontSize: '0.9rem' }}>Email</strong>
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
-                    Delivered to alex@company.com
+                    {userEmail ? `Delivered to ${userEmail}` : 'Delivered to your email'}
                   </span>
                 </div>
               </label>
@@ -127,7 +136,7 @@ export default function SetupPage() {
                 <div className="radio-dot" />
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
                   <div>
-                    <strong style={{ display: 'block', fontSize: '0.9rem' }}>Telegram ✈️ <span style={{ fontSize: '0.7rem', color: 'var(--accent-blue)' }}>Pro/Team</span></strong>
+                    <strong style={{ display: 'block', fontSize: '0.9rem' }}>Telegram ✈️ <span style={{ fontSize: '0.7rem', color: 'var(--accent-blue)' }}>Pro</span></strong>
                     <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
                       Connect your bot from the dashboard sidebar
                     </span>

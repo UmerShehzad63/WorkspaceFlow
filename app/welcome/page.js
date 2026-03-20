@@ -144,7 +144,7 @@ export default function WelcomePage() {
             <div className={styles.featureItem}><span>📅</span><span>Full morning briefings with meeting context</span></div>
             <div className={styles.featureItem}><span>💬</span><span>Natural language commands across Gmail, Drive &amp; Calendar</span></div>
             <div className={styles.featureItem}><span>🔄</span><span>Create unlimited automation rules</span></div>
-            <div className={styles.featureItem}><span>✈️</span><span>Telegram delivery — briefings straight to your phone (Pro/Team)</span></div>
+            <div className={styles.featureItem}><span>✈️</span><span>Telegram delivery — briefings straight to your phone</span></div>
           </div>
         </div>
       </div>

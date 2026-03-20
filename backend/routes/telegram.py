@@ -2,11 +2,13 @@
 Telegram API routes — multi-step conversation engine.
 
 Bot conversation states per chat_id (in-memory):
-    wait_confirm  — showing AI-generated email preview, waiting for YES/EDIT/NO
-    wait_edit     — user requested edits; waiting for SUBJECT:/BODY: reply
+    wait_recipient_confirm — found 1 candidate, waiting for YES/NO confirmation
+    wait_recipient_pick    — found N candidates, waiting for number selection
+    wait_confirm           — AI-generated preview ready, waiting for YES/EDIT/NO
+    wait_edit              — user requested edits; waiting for SUBJECT:/BODY: reply
 
+Email flow: resolve recipient → AI generates content → preview → YES/EDIT/NO → send.
 NL flow: any non-slash message → AI command engine (same as dashboard).
-Gmail Send: AI auto-generates subject + body → preview → YES/EDIT/NO → send.
 """
 import asyncio
 import functools
@@ -31,8 +33,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
 # ── Per-chat conversation state ──────────────────────────────────────────────
-# chat_id → {"state": str, "intent": dict, "user_id": str}
-# state values: "wait_confirm" | "wait_edit"
+# chat_id → {"state": str, "intent": dict, "user_id": str, ...}
+# state values: "wait_recipient_confirm" | "wait_recipient_pick" |
+#               "wait_confirm" | "wait_edit"
 _conv: dict = {}
 
 
@@ -135,6 +138,27 @@ async def _get_automations(user_id: str) -> list:
     except Exception:
         pass
     return []
+
+
+async def _get_user_display_name(user_id: str) -> str:
+    """Fetch user's display name from Supabase auth (for email sign-off)."""
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    url = f"{supabase_url}/auth/v1/admin/users/{user_id}"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {key}", "apikey": key})
+            if resp.status_code == 200:
+                data = resp.json()
+                meta = data.get("user_metadata") or {}
+                name = (meta.get("full_name") or meta.get("name") or "").strip()
+                if name:
+                    return name
+                email = data.get("email", "")
+                return email.split("@")[0] if email else ""
+    except Exception:
+        pass
+    return ""
 
 
 # ── Text/formatting helpers ──────────────────────────────────────────────────
@@ -283,26 +307,21 @@ def _get_body(params: dict) -> str:
     ).strip()
 
 
-async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
-                              original_command: str = ""):
-    """
-    Auto-generate subject + body via AI from the original command, then show
-    a full preview so the user can confirm, edit, or cancel.
-    """
+async def _generate_and_preview(chat_id: str, intent: dict, user_id: str,
+                                original_command: str = ""):
+    """Generate AI email content (subject + body) then show the preview."""
     params  = intent.setdefault("parameters", {})
     to      = (params.get("to") or "").strip()
     subject = (params.get("subject") or "").strip()
     body    = _get_body(params)
 
-    if not to:
-        _conv.pop(chat_id, None)
-        await send_message(chat_id, "📧 Who should I send this to? (Enter an email address)")
-        return
-
     if not subject or not body:
         from ai_engine import generate_email_content
+        sender_name = await _get_user_display_name(user_id)
         try:
-            generated = await generate_email_content(original_command or to, to)
+            generated = await generate_email_content(
+                original_command or to, to, sender_name=sender_name
+            )
             if not subject and generated.get("subject"):
                 subject = generated["subject"]
                 params["subject"] = subject
@@ -315,6 +334,89 @@ async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
     params["body"]    = body
     params["subject"] = subject
     await _show_email_preview(chat_id, intent, user_id)
+
+
+async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
+                              original_command: str = ""):
+    """
+    Step 1: Resolve recipient (name → email via Gmail history).
+    Step 2: AI generates subject + body.
+    Step 3: Show preview with YES / EDIT / NO.
+    """
+    params  = intent.setdefault("parameters", {})
+    to      = (params.get("to") or "").strip()
+
+    if not to:
+        _conv.pop(chat_id, None)
+        await send_message(chat_id, "📧 Who should I send this to? (Enter an email address)")
+        return
+
+    # Step 1 — if `to` is a name (no @), resolve via Gmail contact history
+    if "@" not in to:
+        profile       = await _get_profile(user_id)
+        access_token  = (profile or {}).get("google_access_token")
+        refresh_token = (profile or {}).get("google_refresh_token")
+
+        if not access_token:
+            _conv.pop(chat_id, None)
+            await send_message(chat_id, "⚠️ Google account not connected. Can't search contacts.")
+            return
+
+        from command_executor import find_recipient_candidates, _build_creds
+        try:
+            loop       = asyncio.get_event_loop()
+            creds      = await loop.run_in_executor(
+                None, functools.partial(_build_creds, access_token, refresh_token)
+            )
+            candidates = await loop.run_in_executor(
+                None, functools.partial(find_recipient_candidates, creds, to)
+            )
+        except Exception:
+            logger.exception("[Telegram] Recipient resolution failed for chat_id=%s", chat_id)
+            candidates = []
+
+        if not candidates:
+            _conv.pop(chat_id, None)
+            await send_message(
+                chat_id,
+                f"❌ I couldn't find an email for <b>{to}</b> in your Gmail history.\n\n"
+                "Please provide their email address directly.",
+            )
+            return
+
+        if len(candidates) == 1:
+            c = candidates[0]
+            params["to"] = c["email"]
+            _conv[chat_id] = {
+                "state":            "wait_recipient_confirm",
+                "intent":           intent,
+                "user_id":          user_id,
+                "original_command": original_command,
+            }
+            await send_message(
+                chat_id,
+                f"📧 Found: <b>{c.get('display_name', c['email'])}</b> &lt;{c['email']}&gt;\n\n"
+                "Is this correct? Reply <b>YES</b> to continue or <b>NO</b> to cancel.",
+            )
+            return
+
+        # Multiple matches — list them
+        lines = [f"🔍 Multiple matches for <b>{to}</b>. Which one?\n"]
+        for i, c in enumerate(candidates[:5], 1):
+            lines.append(f"{i}. {c.get('display_name', '')} &lt;{c['email']}&gt;")
+        lines.append("\nReply with the <b>number</b> (1, 2, …) or <b>NO</b> to cancel.")
+        _conv[chat_id] = {
+            "state":            "wait_recipient_pick",
+            "intent":           intent,
+            "user_id":          user_id,
+            "original_command": original_command,
+            "candidates":       candidates[:5],
+        }
+        await send_message(chat_id, "\n".join(lines))
+        return
+
+    # Step 2+3 — email already has @, go straight to generation + preview
+    await _generate_and_preview(chat_id, intent, user_id, original_command)
 
 
 async def _show_email_preview(chat_id: str, intent: dict, user_id: str):
@@ -615,6 +717,36 @@ async def telegram_webhook(request: Request):
         params  = intent.setdefault("parameters", {})
         answer  = text.strip()
         upper   = answer.upper()
+
+        if state == "wait_recipient_confirm":
+            orig_cmd = _conv[chat_id].get("original_command", "")
+            if upper in ("YES", "Y", "OK", "YEP", "SURE"):
+                _conv.pop(chat_id, None)
+                await _generate_and_preview(chat_id, intent, user_id, orig_cmd)
+            elif upper in ("NO", "N", "CANCEL"):
+                _conv.pop(chat_id, None)
+                await send_message(chat_id, "❌ Cancelled.")
+            else:
+                await send_message(chat_id, "Please reply <b>YES</b> to continue or <b>NO</b> to cancel.")
+            return JSONResponse({"ok": True})
+
+        if state == "wait_recipient_pick":
+            candidates = _conv[chat_id].get("candidates", [])
+            orig_cmd   = _conv[chat_id].get("original_command", "")
+            if upper in ("NO", "N", "CANCEL"):
+                _conv.pop(chat_id, None)
+                await send_message(chat_id, "❌ Cancelled.")
+            elif answer.isdigit() and 1 <= int(answer) <= len(candidates):
+                chosen = candidates[int(answer) - 1]
+                params["to"] = chosen["email"]
+                _conv.pop(chat_id, None)
+                await _generate_and_preview(chat_id, intent, user_id, orig_cmd)
+            else:
+                await send_message(
+                    chat_id,
+                    f"Please reply with a number (1–{len(candidates)}) or <b>NO</b> to cancel.",
+                )
+            return JSONResponse({"ok": True})
 
         if state == "wait_confirm":
             if upper in ("YES", "Y", "SEND", "OK", "CONFIRM", "YEP", "YUP", "SURE"):
