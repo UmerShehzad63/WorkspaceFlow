@@ -31,15 +31,43 @@ async def set_webhook(url: str) -> None:
     logger.info("[Telegram] Webhook registered: %s", url)
 
 
-async def send_message(chat_id: str | int, text: str) -> None:
-    """Send a Telegram HTML message (async)."""
+async def send_message(chat_id: str | int, text: str, reply_markup=None) -> dict | None:
+    """Send a Telegram HTML message (async). Returns the sent message dict."""
     _ensure_configured()
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode="HTML",
+            reply_markup=reply_markup,
         )
+        return msg.to_dict() if msg else None
+
+
+async def edit_message_text(chat_id: str | int, message_id: int, text: str, reply_markup=None) -> None:
+    """Edit an existing Telegram message."""
+    _ensure_configured()
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        except Exception as e:
+            logger.warning("[Telegram] edit_message_text failed: %s", e)
+
+
+async def answer_callback_query(callback_query_id: str, text: str = "") -> None:
+    """Acknowledge a callback query (removes loading spinner)."""
+    _ensure_configured()
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        try:
+            await bot.answer_callback_query(callback_query_id=callback_query_id, text=text)
+        except Exception as e:
+            logger.warning("[Telegram] answer_callback_query failed: %s", e)
 
 
 async def send_test_message(chat_id: str | int) -> None:
