@@ -18,7 +18,7 @@ primary_region = "iad"
     #   --build-arg NEXT_PUBLIC_SITE_URL=https://workspaceflow.fly.dev \
     #   --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_... \
     #   --build-arg NEXT_PUBLIC_STRIPE_PRO_PRICE_ID=price_... \
-    #   --build-arg NEXT_PUBLIC_STRIPE_TEAM_PRICE_ID=price_...
+    #   --build-arg NEXT_PUBLIC_STRIPE_PRO_PLUS_PRICE_ID=price_...
 
 [http_service]
   internal_port       = 8080

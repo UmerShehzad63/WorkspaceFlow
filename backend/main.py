@@ -278,6 +278,7 @@ async def run_command(request: Request):
             if len(candidates) == 1:
                 to = candidates[0]["email"]
                 params["to"] = to
+                params["_to_name"] = candidates[0].get("display_name", "")
             else:
                 return {
                     "intent": intent,
@@ -301,7 +302,8 @@ async def run_command(request: Request):
             sender_name = (meta.get("full_name") or meta.get("name") or "").strip()
             if not sender_name:
                 sender_name = (user.get("email") or "").split("@")[0]
-            generated = await generate_email_content(command, to, sender_name=sender_name)
+            to_name   = (params.get("_to_name") or "").strip()
+            generated = await generate_email_content(command, to, sender_name=sender_name, to_name=to_name)
             if not subject and generated.get("subject"):
                 params["subject"] = generated["subject"]
             if not body and generated.get("body"):
@@ -339,7 +341,7 @@ async def run_command(request: Request):
 async def send_preview(request: Request):
     """
     Send the morning briefing to the user's preferred channel.
-    Priority: Telegram (Pro/Team, if connected) → email.
+    Priority: Telegram (Pro/Pro Plus, if connected) → email.
     """
     user    = await require_auth(request)
     user_id = user["id"]

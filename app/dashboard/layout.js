@@ -20,7 +20,6 @@ const sidebarItems = [
   { label: 'Telegram',     href: '/dashboard/telegram',  icon: '✈️', badge: 'PRO' },
   { section: 'Account' },
   { label: 'Settings',     href: '/dashboard/settings',  icon: '⚙️' },
-  { label: 'Team',         href: '/dashboard/team',      icon: '👥', badge: 'PRO_PLUS' },
 ];
 
 // ── Command result overlay ──────────────────────────────────────────────────

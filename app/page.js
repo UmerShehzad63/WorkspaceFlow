@@ -444,18 +444,17 @@ export default function LandingPage() {
             </div>
 
             <div className="pricing-card">
-              <div className="pricing-tier">Team</div>
+              <div className="pricing-tier">Pro Plus</div>
               <div className="pricing-amount">$19<span>/mo</span></div>
-              <p className="pricing-desc">For teams of 3-10 people</p>
+              <p className="pricing-desc">For power users who want everything</p>
               <ul className="pricing-features">
                 <li><span className="check">✓</span> Everything in Pro</li>
-                <li><span className="check">✓</span> Multiple team members</li>
-                <li><span className="check">✓</span> Shared automations</li>
-                <li><span className="check">✓</span> Admin controls</li>
-                <li><span className="check">✓</span> Audit log</li>
+                <li><span className="check">✓</span> Unlimited automations</li>
                 <li><span className="check">✓</span> Priority support</li>
+                <li><span className="check">✓</span> Early access to new features</li>
+                <li><span className="check">✓</span> Advanced AI commands</li>
               </ul>
-              <Link href="/login" className="btn btn-secondary" style={{ width: '100%' }}>Contact Sales</Link>
+              <Link href="/login" className="btn btn-secondary" style={{ width: '100%' }}>Start Free Trial →</Link>
             </div>
           </div>
         </div>

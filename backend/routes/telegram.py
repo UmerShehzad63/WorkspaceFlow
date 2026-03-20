@@ -364,9 +364,10 @@ async def _generate_and_preview(chat_id: str, intent: dict, user_id: str,
         await _update_status("📧 Preparing email…")
         from ai_engine import generate_email_content
         sender_name = await _get_user_display_name(user_id)
+        to_name = (params.get("_to_name") or "").strip()
         try:
             generated = await generate_email_content(
-                original_command or to, to, sender_name=sender_name
+                original_command or to, to, sender_name=sender_name, to_name=to_name
             )
             if not subject and generated.get("subject"):
                 subject = generated["subject"]
@@ -444,6 +445,7 @@ async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
         if len(candidates) == 1:
             c = candidates[0]
             params["to"] = c["email"]
+            params["_to_name"] = c.get("display_name", "")
             _conv[chat_id] = {
                 "state":            "wait_recipient_confirm",
                 "intent":           intent,
@@ -831,6 +833,7 @@ async def telegram_webhook(request: Request):
                 if 0 <= idx < len(candidates):
                     chosen = candidates[idx]
                     params["to"] = chosen["email"]
+                    params["_to_name"] = chosen.get("display_name", "")
                     status_msg_id = conv.get("status_message_id", message_id)
                     _conv.pop(chat_id, None)
                     await edit_message_text(chat_id, status_msg_id, "📧 Preparing email…")

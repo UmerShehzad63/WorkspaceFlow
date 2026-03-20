@@ -92,47 +92,75 @@ OLDER EMAILS ({len(old)}): {json.dumps([{'from': e['from'], 'subject': e['subjec
     return await _call_openai(messages)
 
 
-async def generate_email_content(command: str, to: str, context: str = "", sender_name: str = "") -> dict:
+async def generate_email_content(
+    command: str,
+    to: str,
+    context: str = "",
+    sender_name: str = "",
+    to_name: str = "",
+) -> dict:
     """
     Generate a complete professional email (subject + body) from the user's
     natural language command.
 
     sender_name: the sender's real name for sign-off (from Google/Supabase profile).
-    context: optional extra data (calendar events, snippets, etc.).
+    to_name: recipient's display name (used in greeting).
+    context: optional workspace context (calendar events, email snippets, etc.).
     """
     from datetime import datetime
     today = datetime.now().strftime("%A, %B %d, %Y")
 
-    context_block = f"\nWorkspace context for this email:\n{context}\n" if context else ""
+    context_block = f"\n\nWorkspace context (use this data in the email — do NOT invent details):\n{context}" if context else ""
+
+    # Build greeting — use first name if we have it
+    if to_name:
+        first_name = to_name.strip().split()[0]
+        greeting = f"Hi {first_name},"
+    else:
+        greeting = "Hi,"
+
     sign_off = f"Best regards,\n{sender_name}" if sender_name else "Best regards"
+    sender_first = sender_name.strip().split()[0] if sender_name else ""
 
-    prompt = f"""Generate a complete, professional email based on this request.
+    prompt = f"""Generate a complete, professional email based on the request below.
 
-Request: {command}
-Recipient: {to}
-Sender name: {sender_name or "(unknown — sign with 'Best regards' only, no name)"}
-Today: {today}{context_block}
+REQUEST: {command}
+RECIPIENT EMAIL: {to}
+RECIPIENT NAME: {to_name or "(unknown)"}
+SENDER NAME: {sender_name or "(unknown)"}
+TODAY: {today}{context_block}
 
-Return ONLY this JSON (no other text):
+Return ONLY this JSON (no markdown, no extra text):
 {{
-  "subject": "Concise, specific subject line",
-  "body": "Full email body — plain text, no markdown, professional tone"
+  "subject": "Specific, action-oriented subject line (not generic)",
+  "body": "Full email body as described below"
 }}
 
-Rules:
-- Write a specific, ready-to-send email.
-- NEVER use bracket placeholders: no [Your Name], [Your Position], [Your Contact Information], [Name], or any [bracketed text].
-- Sign the email exactly with: "{sign_off}" — use the actual name above if provided.
-- If the request mentions calendar events, tasks, or "today's plan", use the
-  provided context to list the actual items in the body.
-- If no context is provided for calendar-related requests, write a polite
-  request for the information instead of inventing events.
-- Keep the body concise (3–8 sentences) unless detail is clearly needed.
-- Start the body with "Hi," or a direct statement — not "Dear [Name]".
+EMAIL BODY REQUIREMENTS:
+1. Start with exactly: "{greeting}"
+2. Write 3–5 sentences that are substantive and specific to the request. Do NOT write one-liners.
+3. If workspace context was provided (calendar events, emails, files), reference the ACTUAL data — times, names, titles — don't be vague.
+4. If the request involves scheduling, include the specific time/date from context or ask for availability if unknown.
+5. End with exactly: "{sign_off}"
+6. Use plain text only — no markdown, no bullet points unless the request explicitly calls for a list.
+
+ABSOLUTE RULES:
+- NEVER use any bracket placeholders: [Your Name], [Name], [Position], [Date], [Time], [Details], [Your Contact], or any [bracketed text] whatsoever.
+- Sign with the actual sender name "{sender_first or 'the sender'}" — never a placeholder.
+- Do NOT add a P.S. or postscript unless the request asks for one.
+- Do NOT invent facts, meeting details, or file contents that are not in the context.
 """
 
     messages = [
-        {"role": "system", "content": "You are an executive assistant. Generate professional emails. Return valid JSON only. Never use bracket placeholders like [Your Name]."},
+        {
+            "role": "system",
+            "content": (
+                "You are a senior executive assistant drafting emails on behalf of busy professionals. "
+                "You write complete, specific, ready-to-send emails — never skeleton templates. "
+                "You NEVER use bracket placeholders like [Your Name] or [Details]. "
+                "Return valid JSON only."
+            ),
+        },
         {"role": "user", "content": prompt},
     ]
     return await _call_openai(messages)

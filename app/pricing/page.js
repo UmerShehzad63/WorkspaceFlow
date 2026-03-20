@@ -97,15 +97,12 @@ export default function PricingPage() {
             <div className="pricing-card">
               <div className="pricing-tier">Pro Plus</div>
               <div className="pricing-amount">$19<span>/mo</span></div>
-              <p className="pricing-desc">Unlimited power for power users and teams</p>
+              <p className="pricing-desc">Unlimited power for the most demanding users</p>
               <ul className="pricing-features">
                 <li><span className="check">✓</span> Everything in Pro</li>
                 <li><span className="check">✓</span> <strong>Unlimited</strong> automated rules</li>
-                <li><span className="check">✓</span> Multiple team members</li>
-                <li><span className="check">✓</span> Shared automations</li>
-                <li><span className="check">✓</span> Shared command history</li>
-                <li><span className="check">✓</span> Admin controls &amp; permissions</li>
-                <li><span className="check">✓</span> Audit log</li>
+                <li><span className="check">✓</span> Advanced AI commands</li>
+                <li><span className="check">✓</span> Early access to new features</li>
                 <li><span className="check">✓</span> Priority support</li>
               </ul>
               <button
@@ -146,11 +143,8 @@ export default function PricingPage() {
                 <tr><td>Custom delivery time</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>Telegram delivery</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>Skip weekends</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
-                <tr><td>Team members</td><td>1</td><td className={styles.highlighted}>1</td><td>Up to 10</td></tr>
-                <tr><td>Shared rules</td><td>❌</td><td className={styles.highlighted}>❌</td><td>✅</td></tr>
-                <tr><td>Admin controls</td><td>❌</td><td className={styles.highlighted}>❌</td><td>✅</td></tr>
-                <tr><td>Audit log</td><td>❌</td><td className={styles.highlighted}>❌</td><td>✅</td></tr>
                 <tr><td>Priority support</td><td>❌</td><td className={styles.highlighted}>❌</td><td>✅</td></tr>
+                <tr><td>Early feature access</td><td>❌</td><td className={styles.highlighted}>❌</td><td>✅</td></tr>
               </tbody>
             </table>
           </div>

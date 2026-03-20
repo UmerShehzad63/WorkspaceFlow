@@ -148,7 +148,7 @@ def _is_due(user: dict, now_utc: datetime) -> bool:
 async def send_daily_briefings():
     """
     Called every 5 minutes by APScheduler.
-    Sends briefings to Pro/Team users whose configured time is in this window.
+    Sends briefings to Pro/Pro Plus users whose configured time is in this window.
     """
     now_utc = datetime.now(tz.utc)
     users   = await _fetch_telegram_users()
@@ -185,7 +185,7 @@ async def send_daily_briefings():
             # Either way — skip the briefing
             continue
 
-        # ── Active pro/team user — send briefing ───────────────────────────
+        # ── Active pro/pro_plus user — send briefing ──────────────────────
         # If they re-subscribed, clear any previous expiry notification record
         _expiry_notified.discard(user_id)
 
