@@ -204,3 +204,53 @@ Rules:
     ]
 
     return await _call_openai(messages)
+
+
+async def _call_openai_text(messages: list) -> str:
+    """Call OpenAI without JSON response format enforcement. Returns raw text."""
+    if not OPENAI_API_KEY:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                OPENAI_BASE_URL,
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 1024,
+                },
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"[OpenAI Text] Error: {e}")
+        return ""
+
+
+async def rewrite_email_field(field: str, current_value: str, instruction: str) -> str:
+    """Rewrite an email subject or body based on a user instruction."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"You are an email assistant. Rewrite the email {field} as instructed. "
+                "Return only the rewritten text — no quotes, no labels, no explanation."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f'Rewrite the following email {field} based on this instruction: "{instruction}"\n\n'
+                f"Original {field}:\n{current_value}\n\n"
+                f"Return only the rewritten {field} text, nothing else."
+            ),
+        },
+    ]
+    result = await _call_openai_text(messages)
+    return result if result else current_value
