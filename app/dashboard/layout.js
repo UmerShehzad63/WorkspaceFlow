@@ -5,11 +5,66 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import GlobalHeader from './components/GlobalHeader';
 import ResultDisplay from './components/ResultDisplay';
-import SupportModal from './components/SupportModal';
 import TelegramConnect from './components/TelegramConnect';
 import { CommandProvider, useCommand } from './command-context';
 
 const SERVICE_ICONS = { Gmail: '📧', Calendar: '📅', Drive: '📁' };
+
+// ── Upgrade modal ────────────────────────────────────────────────────────────
+function UpgradeModal({ onClose }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+      justifyContent: 'center', zIndex: 1000, padding: '16px',
+    }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+        borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '520px',
+        padding: '28px', boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+          <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Choose Your Plan</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '4px 6px' }}>✕</button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+          {/* Pro */}
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px' }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Pro</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>$9<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>/mo</span></div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '14px 0 18px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
+              {['Everything in Free', '5 Automation rules', 'Telegram briefings', 'Command Bar'].map(f => (
+                <li key={f} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', gap: '6px' }}>
+                  <span style={{ color: 'var(--accent-green)' }}>✓</span>{f}
+                </li>
+              ))}
+            </ul>
+            <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem' }}>
+              Upgrade to Pro →
+            </Link>
+          </div>
+
+          {/* Pro Plus */}
+          <div style={{ background: 'rgba(52,211,153,0.04)', border: '1px solid rgba(52,211,153,0.2)', borderRadius: '12px', padding: '20px' }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--accent-green)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Pro Plus</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>$19<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>/mo</span></div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '14px 0 18px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
+              {['Everything in Pro', 'Unlimited automations', 'Advanced AI commands', 'Priority support'].map(f => (
+                <li key={f} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', gap: '6px' }}>
+                  <span style={{ color: 'var(--accent-green)' }}>✓</span>{f}
+                </li>
+              ))}
+            </ul>
+            <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem', background: 'var(--accent-green)', color: '#000' }}>
+              Upgrade to Pro Plus →
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const sidebarItems = [
   { section: 'Workspace' },
@@ -87,15 +142,23 @@ function DashboardShell({ children }) {
 export default function DashboardLayout({ children }) {
   const pathname  = usePathname();
   const router    = useRouter();
-  const [user,        setUser]        = useState(null);
-  const [loading,     setLoading]     = useState(true);
-  const [showSupport, setShowSupport] = useState(false);
+  const [user,          setUser]          = useState(null);
+  const [plan,          setPlan]          = useState('free');
+  const [loading,       setLoading]       = useState(true);
+  const [showUpgrade,   setShowUpgrade]   = useState(false);
 
   useEffect(() => {
     const checkUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) router.push('/login');
-      else setUser(session.user);
+      if (!session) { router.push('/login'); return; }
+      setUser(session.user);
+      // Fetch plan from profiles
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('plan')
+        .eq('id', session.user.id)
+        .single();
+      setPlan((profile?.plan || 'free').toLowerCase());
       setLoading(false);
     };
     checkUser();
@@ -142,14 +205,32 @@ export default function DashboardLayout({ children }) {
               </div>
             </div>
 
-            {/* Pro trial badge */}
-            <div style={{ padding: '10px 14px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                <span>🎁</span>
-                <strong style={{ color: 'var(--accent-green)', fontSize: '0.75rem' }}>Pro Trial Active</strong>
+            {/* Plan badge */}
+            {(plan === 'trialing' || plan === 'pro_trial') && (
+              <div style={{ padding: '10px 14px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                  <span>🎁</span>
+                  <strong style={{ color: 'var(--accent-green)', fontSize: '0.75rem' }}>Pro Trial Active</strong>
+                </div>
+                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem' }}>Upgrade before trial ends</span>
               </div>
-              <span style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem' }}>2 days remaining</span>
-            </div>
+            )}
+            {plan === 'pro' && (
+              <div style={{ padding: '10px 14px', background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>⚡</span>
+                  <strong style={{ color: 'var(--accent-blue)', fontSize: '0.75rem' }}>Pro Plan</strong>
+                </div>
+              </div>
+            )}
+            {plan === 'pro_plus' && (
+              <div style={{ padding: '10px 14px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>🚀</span>
+                  <strong style={{ color: 'var(--accent-green)', fontSize: '0.75rem' }}>Pro Plus Plan</strong>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Nav */}
@@ -187,23 +268,34 @@ export default function DashboardLayout({ children }) {
 
           {/* Bottom actions */}
           <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <Link href="/pricing" className="btn btn-primary" style={{ width: '100%', fontSize: '0.82rem' }}>
-              Upgrade to Pro — $9/mo
-            </Link>
-            <button
-              onClick={() => setShowSupport(true)}
-              className="btn btn-secondary"
-              style={{ width: '100%', fontSize: '0.82rem' }}
-            >
-              💬 Contact Support
-            </button>
+            {/* Upgrade CTA — plan-aware */}
+            {(plan === 'free' || plan === 'trialing' || plan === 'pro_trial') && (
+              <button
+                onClick={() => setShowUpgrade(true)}
+                className="btn btn-primary"
+                style={{ width: '100%', fontSize: '0.82rem', border: 'none', fontFamily: 'inherit', cursor: 'pointer' }}
+              >
+                Upgrade to Pro — $9/mo
+              </button>
+            )}
+            {plan === 'pro' && (
+              <Link href="/pricing" className="btn btn-primary" style={{ width: '100%', fontSize: '0.82rem', textAlign: 'center' }}>
+                Upgrade to Pro Plus →
+              </Link>
+            )}
+            {plan === 'pro_plus' && (
+              <Link href="/dashboard/settings" className="btn btn-secondary" style={{ width: '100%', fontSize: '0.82rem', textAlign: 'center' }}>
+                Manage Subscription
+              </Link>
+            )}
+
             <button
               onClick={async () => {
                 await supabase.auth.signOut();
                 router.push('/login');
               }}
               className="btn btn-secondary"
-              style={{ width: '100%', fontSize: '0.82rem', background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}
+              style={{ width: '100%', fontSize: '0.82rem', background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)', fontFamily: 'inherit', cursor: 'pointer' }}
             >
               Sign Out
             </button>
@@ -235,7 +327,7 @@ export default function DashboardLayout({ children }) {
         </div>
       </div>
 
-      {showSupport && <SupportModal onClose={() => setShowSupport(false)} />}
+      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} />}
     </CommandProvider>
   );
 }

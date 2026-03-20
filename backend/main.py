@@ -313,19 +313,83 @@ async def run_command(request: Request):
         # ── Step 3: Return for preview ────────────────────────────────────
         return {"intent": intent, "preview_only": True}
 
+    # For Calendar Create/Schedule/Add/Book: resolve attendees → preview confirmation.
+    if preview_only and intent.get("service", "").lower() == "calendar" and \
+            intent.get("action", "").lower() in ("schedule", "create", "add", "book"):
+        params = intent.setdefault("parameters", {})
+
+        # Collect attendees from all possible keys the AI might use
+        raw_attendees = list(params.get("attendees") or [])
+        if isinstance(raw_attendees, str):
+            raw_attendees = [a.strip() for a in raw_attendees.split(",")]
+        for key in ("attendee", "with"):
+            val = params.get(key)
+            if val:
+                raw_attendees.append(str(val))
+
+        # Resolve name-only attendees → emails via Gmail history
+        if raw_attendees:
+            from command_executor import find_recipient_candidates, _build_creds
+            loop = asyncio.get_event_loop()
+            creds = await loop.run_in_executor(
+                None, functools.partial(_build_creds, access_token, refresh_token)
+            )
+            resolved = []
+            for att in raw_attendees:
+                att = att.strip()
+                if not att:
+                    continue
+                if "@" in att:
+                    resolved.append(att)
+                else:
+                    candidates = await loop.run_in_executor(
+                        None, functools.partial(find_recipient_candidates, creds, att)
+                    )
+                    if len(candidates) == 1:
+                        resolved.append(candidates[0]["email"])
+                    elif len(candidates) > 1:
+                        return {
+                            "intent": intent,
+                            "result": {
+                                "type": "needs_disambiguation",
+                                "kind": "recipient",
+                                "query": att,
+                                "candidates": candidates,
+                                "current_overrides": overrides,
+                            },
+                            "preview_only": False,
+                            "needs_disambiguation": True,
+                        }
+                    else:
+                        # Can't resolve — keep the raw value; Calendar API will
+                        # reject non-email strings gracefully on execution.
+                        resolved.append(att)
+            params["attendees"] = resolved
+
+        intent["parameters"] = params
+        return {"intent": intent, "preview_only": True}
+
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None, functools.partial(execute_command, intent, access_token, refresh_token, overrides)
         )
     except Exception as e:
+        import re as _re
         error_str = str(e)
         logger.exception("[Command] Execution error")
         if "403" in error_str or "insufficient" in error_str.lower() or "scope" in error_str.lower():
-            raise HTTPException(status_code=403, detail="Insufficient Google permissions. Please sign out and sign in again.")
+            raise HTTPException(status_code=403, detail="Insufficient Google permissions. Please sign out and sign in again to grant the required access.")
         if "timeout" in error_str.lower():
             raise HTTPException(status_code=504, detail="Google API timed out. Please try again.")
-        raise HTTPException(status_code=502, detail="Command execution failed. Please try again.")
+        if "401" in error_str or "invalid_grant" in error_str.lower():
+            raise HTTPException(status_code=401, detail="Google session expired. Please sign out and sign in again.")
+        # Extract a meaningful message from Google HttpError responses
+        match = _re.search(r'"message":\s*"([^"]+)"', error_str)
+        if match:
+            raise HTTPException(status_code=502, detail=f"Google API error: {match.group(1)}")
+        # Surface the raw error (truncated) rather than a useless generic message
+        raise HTTPException(status_code=502, detail=f"Command failed: {str(e)[:200]}")
 
     if isinstance(result, dict) and result.get("type") == "error":
         raise HTTPException(status_code=422, detail=result["error"])

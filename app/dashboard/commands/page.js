@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import styles from './commands.module.css';
 import ResultDisplay from '../components/ResultDisplay';
 import EmailSendPreviewModal from '../components/EmailSendPreviewModal';
+import CalendarCreatePreviewModal from '../components/CalendarCreatePreviewModal';
 import { useCommand } from '../command-context';
 
 const EXAMPLES = [
@@ -26,8 +27,9 @@ export default function CommandsPage() {
   const [resultState,    setResultState]    = useState(null); // { intent, result } | { error } | null
   const [isExecuting,    setIsExecuting]    = useState(false);
   const [history,        setHistory]        = useState([]);
-  const [pendingCommand, setPendingCommand] = useState(null); // { command, overrides }
-  const [emailPreview,   setEmailPreview]   = useState(null); // { intent, commandText, overrides }
+  const [pendingCommand,  setPendingCommand]  = useState(null); // { command, overrides }
+  const [emailPreview,    setEmailPreview]    = useState(null); // { intent, commandText, overrides }
+  const [calendarPreview, setCalendarPreview] = useState(null); // { intent, commandText, overrides }
 
   // skipPreview=true bypasses the preview step (used when confirming from modal)
   const runCommand = async (commandText, overrides = {}, skipPreview = false) => {
@@ -55,9 +57,13 @@ export default function CommandsPage() {
 
       const data = await response.json();
 
-      // Backend wants us to show an email preview before sending
+      // Backend wants us to show a preview before executing
       if (data.preview_only) {
-        setEmailPreview({ intent: data.intent, commandText, overrides });
+        if (data.intent?.service?.toLowerCase() === 'calendar') {
+          setCalendarPreview({ intent: data.intent, commandText, overrides });
+        } else {
+          setEmailPreview({ intent: data.intent, commandText, overrides });
+        }
         return;
       }
 
@@ -108,6 +114,14 @@ export default function CommandsPage() {
   };
 
   const handlePreviewCancel = () => setEmailPreview(null);
+
+  const handleCalendarConfirm = async () => {
+    if (!calendarPreview) return;
+    const preview = calendarPreview;
+    setCalendarPreview(null);
+    await runCommand(preview.commandText, preview.overrides || {}, true);
+  };
+  const handleCalendarCancel = () => setCalendarPreview(null);
 
   const handleExample = (example) => {
     setCommand(example);  // syncs to global context too
@@ -253,12 +267,19 @@ export default function CommandsPage() {
         </div>
       </div>
 
-      {/* Email send preview modal */}
       {emailPreview && (
         <EmailSendPreviewModal
           intent={emailPreview.intent}
           onSend={handlePreviewSend}
           onCancel={handlePreviewCancel}
+        />
+      )}
+
+      {calendarPreview && (
+        <CalendarCreatePreviewModal
+          intent={calendarPreview.intent}
+          onConfirm={handleCalendarConfirm}
+          onCancel={handleCalendarCancel}
         />
       )}
     </div>
