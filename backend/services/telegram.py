@@ -60,6 +60,20 @@ async def edit_message_text(chat_id: str | int, message_id: int, text: str, repl
             logger.warning("[Telegram] edit_message_text failed: %s", e)
 
 
+async def edit_message_reply_markup(chat_id: str | int, message_id: int, reply_markup=None) -> None:
+    """Remove or replace the inline keyboard of a message without changing its text."""
+    _ensure_configured()
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=reply_markup,
+            )
+        except Exception as e:
+            logger.warning("[Telegram] edit_message_reply_markup failed: %s", e)
+
+
 async def answer_callback_query(callback_query_id: str, text: str = "") -> None:
     """Acknowledge a callback query (removes loading spinner)."""
     _ensure_configured()

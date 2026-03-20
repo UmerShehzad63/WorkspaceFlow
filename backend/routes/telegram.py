@@ -28,6 +28,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from services.telegram import (
     answer_callback_query,
+    edit_message_reply_markup,
     edit_message_text,
     format_briefing_telegram,
     generate_verification_code,
@@ -38,11 +39,11 @@ from services.telegram import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
-# ── Per-chat conversation state ──────────────────────────────────────────────
-# chat_id → {"state": str, "intent": dict, "user_id": str, ...}
-# state values: "wait_recipient_confirm" | "wait_recipient_pick" |
-#               "wait_confirm" | "wait_edit"
-_conv: dict = {}
+# ── Per-chat state ───────────────────────────────────────────────────────────
+# _conv: multi-step flow state (active step, intent, etc.)
+# _sessions: task/service lock — persists for the life of a task
+_conv: dict     = {}
+_sessions: dict = {}  # chat_id → {"task": str, "service": str}
 
 
 # ── Supabase helpers ────────────────────────────────────────────────────────
@@ -337,6 +338,68 @@ def _recipient_kb(candidates: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+_CONTINUE_CANCEL_KB = InlineKeyboardMarkup([[
+    InlineKeyboardButton("✅ Continue",            callback_data="flow:continue"),
+    InlineKeyboardButton("❌ Cancel & Start Over", callback_data="flow:cancel"),
+]])
+
+_TASK_LABELS = {
+    "send_email":      "Send Email",
+    "search_email":    "Search Emails",
+    "archive_email":   "Archive Emails",
+    "create_event":    "Create Calendar Event",
+    "search_calendar": "Search Calendar",
+    "search_drive":    "Search Drive",
+}
+_SVC_LABELS = {
+    "gmail":    "Gmail",
+    "calendar": "Google Calendar",
+    "drive":    "Google Drive",
+}
+
+
+def _detect_task(service: str, action: str) -> str:
+    """Derive a task label from service + action."""
+    s, a = service.lower(), action.lower()
+    if s == "gmail":
+        if a in ("send", "reply"):                       return "send_email"
+        if a in ("archive", "delete", "move", "label"):  return "archive_email"
+        return "search_email"
+    if s == "calendar":
+        if a in ("create", "schedule", "add", "book"):   return "create_event"
+        return "search_calendar"
+    return "search_drive"
+
+
+def _sniff_service(text: str) -> str | None:
+    """Return the service name if the text clearly mentions one."""
+    t = text.lower()
+    if "drive" in t or "google drive" in t or "docs" in t or "sheets" in t:
+        return "drive"
+    if "calendar" in t or " cal " in t or "schedule" in t:
+        return "calendar"
+    if "gmail" in t or "email" in t or "inbox" in t or "mail" in t:
+        return "gmail"
+    return None
+
+
+async def _clear_kb(chat_id: str, message_id: int | None) -> None:
+    """Strip inline keyboard from a message, keeping its text intact."""
+    if message_id:
+        await edit_message_reply_markup(chat_id, message_id)
+
+
+def _session_warning(chat_id: str) -> str:
+    """Return the ⚠️ mid-flow warning text for the current session."""
+    session = _sessions.get(chat_id, {})
+    task    = _TASK_LABELS.get(session.get("task", ""), "current task")
+    svc     = _SVC_LABELS.get(session.get("service", ""), "current service")
+    return (
+        f"⚠️ I'm currently helping you with: <b>{task}</b> on <b>{svc}</b>.\n\n"
+        "What would you like to do?"
+    )
+
+
 # ── Email send multi-step helpers ─────────────────────────────────────────────
 
 def _get_body(params: dict) -> str:
@@ -380,7 +443,8 @@ async def _generate_and_preview(chat_id: str, intent: dict, user_id: str,
 
     params["body"]    = body
     params["subject"] = subject
-    await _show_email_preview(chat_id, intent, user_id, status_message_id=status_message_id)
+    # Always send preview as a fresh message (Part 2: no message disappearing)
+    await _show_email_preview(chat_id, intent, user_id)
 
 
 async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
@@ -451,7 +515,6 @@ async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
                 "intent":           intent,
                 "user_id":          user_id,
                 "original_command": original_command,
-                "status_message_id": status_message_id,
             }
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("✅ Yes", callback_data="recipient_confirm:yes"),
@@ -461,12 +524,9 @@ async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
                 f"📧 Found: <b>{c.get('display_name', c['email'])}</b> &lt;{c['email']}&gt;\n\n"
                 "Is this correct?"
             )
-            if status_message_id:
-                await edit_message_text(chat_id, status_message_id, confirm_text, reply_markup=kb)
-            else:
-                msg = await send_message(chat_id, confirm_text, reply_markup=kb)
-                if msg:
-                    _conv[chat_id]["status_message_id"] = msg.get("message_id")
+            msg = await send_message(chat_id, confirm_text, reply_markup=kb)
+            if msg:
+                _conv[chat_id]["confirm_message_id"] = msg.get("message_id")
             return
 
         # Multiple matches — inline buttons
@@ -478,23 +538,19 @@ async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
             "user_id":          user_id,
             "original_command": original_command,
             "candidates":       candidates[:5],
-            "status_message_id": status_message_id,
         }
-        if status_message_id:
-            await edit_message_text(chat_id, status_message_id, pick_text, reply_markup=kb)
-        else:
-            msg = await send_message(chat_id, pick_text, reply_markup=kb)
-            if msg:
-                _conv[chat_id]["status_message_id"] = msg.get("message_id")
+        msg = await send_message(chat_id, pick_text, reply_markup=kb)
+        if msg:
+            _conv[chat_id]["confirm_message_id"] = msg.get("message_id")
         return
 
     # Step 2+3 — email already has @, go straight to generation + preview
     await _generate_and_preview(chat_id, intent, user_id, original_command,
-                                 status_message_id=status_message_id)
+                                 status_message_id=status_message_id)  # spinner only
 
 
-async def _show_email_preview(chat_id: str, intent: dict, user_id: str,
-                              status_message_id: int | None = None):
+async def _show_email_preview(chat_id: str, intent: dict, user_id: str):
+    """Always sends a fresh message — never edits an existing one (Part 2)."""
     params  = intent.get("parameters", {})
     to      = params.get("to", "?")
     subject = params.get("subject") or "(No Subject)"
@@ -507,31 +563,19 @@ async def _show_email_preview(chat_id: str, intent: dict, user_id: str,
         f"<b>Subject:</b> {subject}\n"
         f"<b>Body:</b>\n{body_preview}"
     )
+    msg = await send_message(chat_id, preview, reply_markup=_CONFIRM_KB)
     _conv[chat_id] = {
         "state":             "wait_confirm",
         "intent":            intent,
         "user_id":           user_id,
-        "status_message_id": status_message_id,
+        "status_message_id": msg.get("message_id") if msg else None,
     }
-    if status_message_id:
-        await edit_message_text(chat_id, status_message_id, preview, reply_markup=_CONFIRM_KB)
-    else:
-        msg = await send_message(chat_id, preview, reply_markup=_CONFIRM_KB)
-        if msg:
-            _conv[chat_id]["status_message_id"] = msg.get("message_id")
 
 
 async def _execute_email_send(chat_id: str, intent: dict,
-                               access_token: str, refresh_token: str | None,
-                               status_message_id: int | None = None):
-    """Call execute_command for a Gmail send and report the result."""
+                               access_token: str, refresh_token: str | None):
+    """Call execute_command for a Gmail send; always sends new result messages (Part 2)."""
     from command_executor import execute_command
-
-    async def _reply(text: str):
-        if status_message_id:
-            await edit_message_text(chat_id, status_message_id, text)
-        else:
-            await send_message(chat_id, text)
 
     try:
         loop   = asyncio.get_event_loop()
@@ -543,7 +587,7 @@ async def _execute_email_send(chat_id: str, intent: dict,
 
         if isinstance(result, dict):
             if result.get("type") == "error":
-                await _reply(f"❌ Email failed: {result.get('error', 'unknown error')}")
+                await send_message(chat_id, f"❌ Email failed: {result.get('error', 'unknown error')}")
                 return
             if result.get("type") == "needs_disambiguation":
                 kind       = result.get("kind", "item")
@@ -551,36 +595,34 @@ async def _execute_email_send(chat_id: str, intent: dict,
                 if kind == "recipient" and candidates:
                     norm = [{"email": c.get("email", ""), "display_name": c.get("display_name", c.get("email", ""))} for c in candidates[:5]]
                     kb = _recipient_kb(norm)
+                    msg = await send_message(chat_id,
+                                             "🔍 <b>Multiple recipients found — which one?</b>",
+                                             reply_markup=kb)
                     _conv[chat_id] = {
                         "state":      "wait_recipient_pick",
                         "intent":     intent,
                         "candidates": norm,
                         "original_command": "",
-                        "status_message_id": status_message_id,
+                        "confirm_message_id": (msg or {}).get("message_id"),
                     }
-                    if status_message_id:
-                        await edit_message_text(chat_id, status_message_id,
-                                                "🔍 <b>Multiple recipients found — which one?</b>",
-                                                reply_markup=kb)
-                    else:
-                        await send_message(chat_id, "🔍 <b>Multiple recipients found — which one?</b>", reply_markup=kb)
                 else:
                     lines = [f"🔍 <b>Multiple {kind}s found — be more specific:</b>"]
                     for c in candidates[:5]:
                         lines.append(f"• {c.get('name', '')} <i>({c.get('type', '')})</i>")
                     lines.append("\nPlease rephrase with more specific details.")
-                    await _reply("\n".join(lines))
+                    await send_message(chat_id, "\n".join(lines))
                 return
             if result.get("sent") or result.get("type") == "gmail_send":
                 to = result.get("to") or intent.get("parameters", {}).get("to", "recipient")
-                await _reply(f"✅ Email sent to <b>{to}</b>")
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, f"✅ Email sent to <b>{to}</b>")
                 return
 
-        await _reply(_format_nl_result(result))
+        await send_message(chat_id, _format_nl_result(result))
 
     except Exception as e:
         logger.exception("[Telegram] Email send failed for chat_id=%s", chat_id)
-        await _reply(f"❌ Email failed: {str(e)[:300]}")
+        await send_message(chat_id, f"❌ Email failed: {str(e)[:300]}")
 
 
 # ── NL command handler ────────────────────────────────────────────────────────
@@ -627,7 +669,6 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
             "original_command": text,
             "access_token":  access_token,
             "refresh_token": refresh_token,
-            "status_message_id": status_message_id,
         }
         pick_text = (
             "🤔 I didn't catch which service you mean.\n"
@@ -640,6 +681,9 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
             if msg:
                 _conv[chat_id]["status_message_id"] = msg.get("message_id")
         return
+
+    # Lock session: task + service for this conversation
+    _sessions[chat_id] = {"task": _detect_task(service, action), "service": service}
 
     # Gmail Send/Reply → AI generates subject+body, then shows preview
     if service == "gmail" and action in ("send", "reply"):
@@ -662,8 +706,11 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
                     chat_id, result.get("type") if isinstance(result, dict) else type(result))
     except Exception as e:
         logger.exception("[Telegram] NL execution failed for chat_id=%s", chat_id)
+        _sessions.pop(chat_id, None)
         await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
         return
+
+    _sessions.pop(chat_id, None)
 
     if isinstance(result, dict) and result.get("type") == "needs_disambiguation":
         kind       = result.get("kind", "item")
@@ -780,53 +827,55 @@ async def telegram_webhook(request: Request):
         # ── email: send / edit / cancel ───────────────────────────────────────
         if cq_data == "email:send":
             _conv.pop(chat_id, None)
-            await edit_message_text(chat_id, message_id, "⏳ Sending…")
-            await _execute_email_send(chat_id, intent, access_token, refresh_token,
-                                       status_message_id=message_id)
+            await _clear_kb(chat_id, message_id)
+            await _execute_email_send(chat_id, intent, access_token, refresh_token)
 
         elif cq_data == "email:edit":
-            _conv[chat_id] = {**conv, "state": "wait_edit_field",
-                               "status_message_id": message_id}
-            await edit_message_text(chat_id, message_id,
-                                    "✏️ <b>What would you like to change?</b>",
-                                    reply_markup=_EDIT_FIELD_KB)
+            _conv[chat_id] = {**conv, "state": "wait_edit_field"}
+            await _clear_kb(chat_id, message_id)
+            await send_message(chat_id,
+                               "✏️ <b>What would you like to change?</b>",
+                               reply_markup=_EDIT_FIELD_KB)
 
         elif cq_data == "email:cancel":
             _conv.pop(chat_id, None)
-            await edit_message_text(chat_id, message_id, "❌ Cancelled.")
+            _sessions.pop(chat_id, None)
+            await _clear_kb(chat_id, message_id)
+            await send_message(chat_id, "❌ Cancelled.")
 
         elif cq_data == "email:edit_subject":
-            _conv[chat_id] = {**conv, "state": "wait_edit",
-                               "edit_field": "subject",
-                               "status_message_id": message_id}
-            await edit_message_text(chat_id, message_id,
-                                    "✏️ Send your new <b>subject</b>:")
+            _conv[chat_id] = {**conv, "state": "wait_edit", "edit_field": "subject"}
+            await _clear_kb(chat_id, message_id)
+            await send_message(chat_id, "✏️ Send your new <b>subject</b>:")
 
         elif cq_data == "email:edit_body":
-            _conv[chat_id] = {**conv, "state": "wait_edit",
-                               "edit_field": "body",
-                               "status_message_id": message_id}
-            await edit_message_text(chat_id, message_id,
-                                    "✏️ Send your new <b>body</b>:")
+            _conv[chat_id] = {**conv, "state": "wait_edit", "edit_field": "body"}
+            await _clear_kb(chat_id, message_id)
+            await send_message(chat_id, "✏️ Send your new <b>body</b>:")
 
         # ── recipient_confirm: yes / cancel ───────────────────────────────────
         elif cq_data == "recipient_confirm:yes":
-            status_msg_id = conv.get("status_message_id", message_id)
             _conv.pop(chat_id, None)
-            await edit_message_text(chat_id, status_msg_id, "📧 Preparing email…")
+            await _clear_kb(chat_id, message_id)
+            status_msg = await send_message(chat_id, "📧 Preparing email…")
+            status_msg_id = (status_msg or {}).get("message_id")
             await _generate_and_preview(chat_id, intent, user_id, orig_cmd,
                                          status_message_id=status_msg_id)
 
         elif cq_data == "recipient_confirm:cancel":
             _conv.pop(chat_id, None)
-            await edit_message_text(chat_id, message_id, "❌ Cancelled.")
+            _sessions.pop(chat_id, None)
+            await _clear_kb(chat_id, message_id)
+            await send_message(chat_id, "❌ Cancelled.")
 
         # ── recipient pick (inline button index) ─────────────────────────────
         elif cq_data.startswith("recipient:"):
             suffix = cq_data.split(":", 1)[1]
             if suffix == "cancel":
                 _conv.pop(chat_id, None)
-                await edit_message_text(chat_id, message_id, "❌ Cancelled.")
+                _sessions.pop(chat_id, None)
+                await _clear_kb(chat_id, message_id)
+                await send_message(chat_id, "❌ Cancelled.")
             elif suffix.isdigit():
                 candidates = conv.get("candidates", [])
                 idx = int(suffix)
@@ -834,9 +883,10 @@ async def telegram_webhook(request: Request):
                     chosen = candidates[idx]
                     params["to"] = chosen["email"]
                     params["_to_name"] = chosen.get("display_name", "")
-                    status_msg_id = conv.get("status_message_id", message_id)
                     _conv.pop(chat_id, None)
-                    await edit_message_text(chat_id, status_msg_id, "📧 Preparing email…")
+                    await _clear_kb(chat_id, message_id)
+                    status_msg = await send_message(chat_id, "📧 Preparing email…")
+                    status_msg_id = (status_msg or {}).get("message_id")
                     await _generate_and_preview(chat_id, intent, user_id, orig_cmd,
                                                  status_message_id=status_msg_id)
 
@@ -846,16 +896,25 @@ async def telegram_webhook(request: Request):
             intent["service"] = chosen_service
             stored_access  = conv.get("access_token",  access_token)
             stored_refresh = conv.get("refresh_token", refresh_token)
-            status_msg_id  = conv.get("status_message_id", message_id)
+            orig_cmd_svc   = conv.get("original_command", "")
             _conv.pop(chat_id, None)
 
+            # Lock session for the chosen service
+            _sessions[chat_id] = {
+                "task":    _detect_task(chosen_service, (intent.get("action") or "")),
+                "service": chosen_service,
+            }
+
             action = (intent.get("action") or "").lower()
+            await _clear_kb(chat_id, message_id)
             if chosen_service == "gmail" and action in ("send", "reply"):
-                await edit_message_text(chat_id, status_msg_id, "📧 Preparing email…")
-                await _advance_email_send(chat_id, intent, user_id, orig_cmd,
+                status_msg = await send_message(chat_id, "📧 Preparing email…")
+                status_msg_id = (status_msg or {}).get("message_id")
+                await _advance_email_send(chat_id, intent, user_id, orig_cmd_svc,
                                            status_message_id=status_msg_id)
             else:
-                await edit_message_text(chat_id, status_msg_id, "⏳ Processing…")
+                status_msg = await send_message(chat_id, "⏳ Processing…")
+                status_msg_id = (status_msg or {}).get("message_id")
                 from command_executor import execute_command
                 try:
                     loop   = asyncio.get_event_loop()
@@ -863,9 +922,32 @@ async def telegram_webhook(request: Request):
                         None,
                         functools.partial(execute_command, intent, stored_access, stored_refresh),
                     )
+                    _sessions.pop(chat_id, None)
                     await _send_long(chat_id, _format_nl_result(result))
                 except Exception as e:
+                    _sessions.pop(chat_id, None)
                     await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
+
+        # ── flow: continue / cancel (off-topic warning response) ─────────────
+        elif cq_data == "flow:continue":
+            await _clear_kb(chat_id, message_id)
+            current_conv   = _conv.get(chat_id, {})
+            current_state  = current_conv.get("state", "")
+            current_intent = current_conv.get("intent", {})
+            current_user   = current_conv.get("user_id", user_id)
+            if current_state == "wait_confirm":
+                await _show_email_preview(chat_id, current_intent, current_user)
+            elif current_state == "wait_edit_field":
+                await send_message(chat_id, "✏️ <b>What would you like to change?</b>",
+                                   reply_markup=_EDIT_FIELD_KB)
+            else:
+                await send_message(chat_id, "You're still in the middle of a task. Type /cancel to start over.")
+
+        elif cq_data == "flow:cancel":
+            _conv.pop(chat_id, None)
+            _sessions.pop(chat_id, None)
+            await _clear_kb(chat_id, message_id)
+            await send_message(chat_id, "❌ Cancelled. Start a new request anytime.")
 
         return JSONResponse({"ok": True})
 
@@ -978,6 +1060,7 @@ async def telegram_webhook(request: Request):
     # ── /cancel — clear any active conversation state ────────────────────────
     if command == "cancel":
         _conv.pop(chat_id, None)
+        _sessions.pop(chat_id, None)
         await send_message(chat_id, "❌ Cancelled.")
         return JSONResponse({"ok": True})
 
@@ -988,22 +1071,55 @@ async def telegram_webhook(request: Request):
         params  = intent.setdefault("parameters", {})
         answer  = text.strip()
         upper   = answer.upper()
-        status_message_id = _conv[chat_id].get("status_message_id")
 
-        # wait_recipient_confirm and wait_recipient_pick are now primarily
+        # wait_service_pick: user typed a service clarification instead of pressing a button
+        if state == "wait_service_pick":
+            sniffed        = _sniff_service(answer)
+            stored_access  = _conv[chat_id].get("access_token",  access_token)
+            stored_refresh = _conv[chat_id].get("refresh_token", refresh_token)
+            orig_cmd       = _conv[chat_id].get("original_command", "")
+            if sniffed:
+                intent["service"] = sniffed
+                _sessions[chat_id] = {
+                    "task":    _detect_task(sniffed, (intent.get("action") or "")),
+                    "service": sniffed,
+                }
+                _conv.pop(chat_id, None)
+                action_lower = (intent.get("action") or "").lower()
+                if sniffed == "gmail" and action_lower in ("send", "reply"):
+                    status_msg = await send_message(chat_id, "📧 Preparing email…")
+                    await _advance_email_send(chat_id, intent, user_id, orig_cmd,
+                                              status_message_id=(status_msg or {}).get("message_id"))
+                else:
+                    from command_executor import execute_command
+                    status_msg = await send_message(chat_id, "⏳ Processing…")
+                    try:
+                        loop   = asyncio.get_event_loop()
+                        result = await loop.run_in_executor(
+                            None, functools.partial(execute_command, intent, stored_access, stored_refresh)
+                        )
+                        _sessions.pop(chat_id, None)
+                        await _send_long(chat_id, _format_nl_result(result))
+                    except Exception as e:
+                        _sessions.pop(chat_id, None)
+                        await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
+            else:
+                await send_message(chat_id, "Please pick a service:", reply_markup=_SERVICE_KB)
+            return JSONResponse({"ok": True})
+
+        # wait_recipient_confirm and wait_recipient_pick are primarily
         # button-driven but keep text fallback in case buttons are slow
         if state == "wait_recipient_confirm":
             orig_cmd = _conv[chat_id].get("original_command", "")
             if upper in ("YES", "Y", "OK", "YEP", "SURE"):
                 _conv.pop(chat_id, None)
+                status_msg = await send_message(chat_id, "📧 Preparing email…")
                 await _generate_and_preview(chat_id, intent, user_id, orig_cmd,
-                                             status_message_id=status_message_id)
+                                             status_message_id=(status_msg or {}).get("message_id"))
             elif upper in ("NO", "N", "CANCEL"):
                 _conv.pop(chat_id, None)
-                if status_message_id:
-                    await edit_message_text(chat_id, status_message_id, "❌ Cancelled.")
-                else:
-                    await send_message(chat_id, "❌ Cancelled.")
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, "❌ Cancelled.")
             return JSONResponse({"ok": True})
 
         if state == "wait_recipient_pick":
@@ -1011,45 +1127,44 @@ async def telegram_webhook(request: Request):
             orig_cmd   = _conv[chat_id].get("original_command", "")
             if upper in ("NO", "N", "CANCEL"):
                 _conv.pop(chat_id, None)
-                if status_message_id:
-                    await edit_message_text(chat_id, status_message_id, "❌ Cancelled.")
-                else:
-                    await send_message(chat_id, "❌ Cancelled.")
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, "❌ Cancelled.")
             elif answer.isdigit() and 1 <= int(answer) <= len(candidates):
                 chosen = candidates[int(answer) - 1]
                 params["to"] = chosen["email"]
+                params["_to_name"] = chosen.get("display_name", "")
                 _conv.pop(chat_id, None)
+                status_msg = await send_message(chat_id, "📧 Preparing email…")
                 await _generate_and_preview(chat_id, intent, user_id, orig_cmd,
-                                             status_message_id=status_message_id)
+                                             status_message_id=(status_msg or {}).get("message_id"))
             return JSONResponse({"ok": True})
 
         if state == "wait_confirm":
             if upper in ("YES", "Y", "SEND", "OK", "CONFIRM", "YEP", "YUP", "SURE"):
                 _conv.pop(chat_id, None)
-                await _execute_email_send(chat_id, intent, access_token, refresh_token,
-                                           status_message_id=status_message_id)
+                await _execute_email_send(chat_id, intent, access_token, refresh_token)
             elif upper == "EDIT":
-                _conv[chat_id] = {**_conv[chat_id], "state": "wait_edit_field",
-                                   "status_message_id": status_message_id}
-                if status_message_id:
-                    await edit_message_text(chat_id, status_message_id,
-                                            "✏️ <b>What would you like to change?</b>",
-                                            reply_markup=_EDIT_FIELD_KB)
-                else:
-                    await send_message(chat_id, "✏️ <b>What would you like to change?</b>",
-                                       reply_markup=_EDIT_FIELD_KB)
+                _conv[chat_id] = {**_conv[chat_id], "state": "wait_edit_field"}
+                await send_message(chat_id, "✏️ <b>What would you like to change?</b>",
+                                   reply_markup=_EDIT_FIELD_KB)
             elif upper in ("NO", "N", "CANCEL", "STOP", "NOPE"):
                 _conv.pop(chat_id, None)
-                if status_message_id:
-                    await edit_message_text(chat_id, status_message_id, "❌ Cancelled.")
-                else:
-                    await send_message(chat_id, "❌ Cancelled.")
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, "❌ Cancelled.")
             else:
-                _conv.pop(chat_id, None)
-                if not access_token:
-                    await send_message(chat_id, "⚠️ Google account not connected.")
-                    return JSONResponse({"ok": True})
-                await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
+                # Off-topic detection: if message seems to be a different-service task, warn
+                sniffed = _sniff_service(answer)
+                session = _sessions.get(chat_id, {})
+                if sniffed and sniffed != session.get("service", sniffed):
+                    await send_message(chat_id, _session_warning(chat_id),
+                                       reply_markup=_CONTINUE_CANCEL_KB)
+                else:
+                    # Unrecognized input — treat as new NL command
+                    _conv.pop(chat_id, None)
+                    if not access_token:
+                        await send_message(chat_id, "⚠️ Google account not connected.")
+                        return JSONResponse({"ok": True})
+                    await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
             return JSONResponse({"ok": True})
 
         if state == "wait_edit":
@@ -1070,8 +1185,8 @@ async def telegram_webhook(request: Request):
                 if not subject_match and not body_match:
                     params["body"] = answer
             _conv.pop(chat_id, None)
-            await _show_email_preview(chat_id, intent, user_id,
-                                       status_message_id=status_message_id)
+            # Always show as fresh message (Part 2)
+            await _show_email_preview(chat_id, intent, user_id)
             return JSONResponse({"ok": True})
 
     # ── Slash commands ────────────────────────────────────────────────────────
