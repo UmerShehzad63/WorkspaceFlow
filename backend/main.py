@@ -233,7 +233,7 @@ async def run_command(request: Request):
 
     supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    profile_url  = f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    profile_url  = f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token,timezone"
     g_headers    = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
 
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -246,6 +246,7 @@ async def run_command(request: Request):
     profile       = profiles[0]
     access_token  = profile.get("google_access_token")
     refresh_token = profile.get("google_refresh_token")
+    user_timezone = profile.get("timezone") or "UTC"
 
     if not access_token:
         raise HTTPException(status_code=400, detail="Google account not connected. Please reconnect.")
@@ -317,6 +318,8 @@ async def run_command(request: Request):
     if preview_only and intent.get("service", "").lower() == "calendar" and \
             intent.get("action", "").lower() in ("schedule", "create", "add", "book"):
         params = intent.setdefault("parameters", {})
+        # Inject user's timezone so calendar_create uses the correct local time
+        params["_timezone"] = user_timezone
 
         # Collect attendees from all possible keys the AI might use
         raw_attendees = list(params.get("attendees") or [])
@@ -361,9 +364,8 @@ async def run_command(request: Request):
                             "needs_disambiguation": True,
                         }
                     else:
-                        # Can't resolve — keep the raw value; Calendar API will
-                        # reject non-email strings gracefully on execution.
-                        resolved.append(att)
+                        # Can't resolve — leave empty so user fills in the modal
+                        resolved.append("")
             params["attendees"] = resolved
 
         intent["parameters"] = params

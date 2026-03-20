@@ -182,6 +182,19 @@ def find_recipient_candidates(creds, name):
                 pairs.append(("", m.group(1)))
         return pairs
 
+    # Patterns that indicate automated/system senders — never suggest these
+    _AUTO = (
+        "noreply", "no-reply", "donotreply", "do-not-reply",
+        "invitations@", "notifications@", "notification@",
+        "mailer@", "bounce@", "automated@", "newsletter@",
+        "reply@", "updates@", "alert@", "info@noreply",
+        "@linkedin.com", "@facebookmail.com", "@twitter.com",
+    )
+
+    def _is_automated(email: str) -> bool:
+        el = email.lower()
+        return any(p in el for p in _AUTO)
+
     def collect(query, header_key):
         try:
             res = svc.users().messages().list(userId="me", q=query, maxResults=10).execute()
@@ -193,7 +206,7 @@ def find_recipient_candidates(creds, name):
                 ).execute()
                 headers = {h["name"]: h["value"] for h in m.get("payload", {}).get("headers", [])}
                 for disp, email in parse_addresses(headers.get(header_key, "")):
-                    if "noreply" in email.lower() or "no-reply" in email.lower():
+                    if _is_automated(email):
                         continue
                     if email not in email_data:
                         email_data[email] = {"display_name": disp or email, "count": 0}
@@ -537,18 +550,21 @@ def calendar_search(access_token, refresh_token, query, max_results=10):
 
 
 def calendar_create(access_token, refresh_token, summary, start_iso, end_iso,
-                    attendees=None, description=""):
+                    attendees=None, description="", user_timezone="UTC"):
     creds = _build_creds(access_token, refresh_token)
     svc = _calendar_service(creds)
 
     event_body = {
         "summary": summary,
         "description": description,
-        "start": {"dateTime": start_iso, "timeZone": "UTC"},
-        "end": {"dateTime": end_iso, "timeZone": "UTC"},
+        "start": {"dateTime": start_iso, "timeZone": user_timezone},
+        "end": {"dateTime": end_iso, "timeZone": user_timezone},
     }
     if attendees:
-        event_body["attendees"] = [{"email": a.strip()} for a in attendees if a.strip()]
+        # Filter empty/invalid entries — only real email addresses
+        valid = [a.strip() for a in attendees if a.strip() and "@" in a]
+        if valid:
+            event_body["attendees"] = [{"email": a} for a in valid]
 
     created = svc.events().insert(
         calendarId="primary", body=event_body
@@ -584,22 +600,29 @@ def _build_gmail_query(params):
 
 
 def _resolve_datetime(dt_str, offset_hours=0):
+    """
+    Parse an AI-supplied datetime string.
+    Returns a naive ISO string (no Z / no UTC offset) so the caller can attach
+    the user's local timezone via the Google Calendar API's `timeZone` field.
+    Only the fallback default time uses UTC.
+    """
     if not dt_str:
         base = datetime.datetime.utcnow() + datetime.timedelta(days=1)
         base = base.replace(hour=10, minute=0, second=0, microsecond=0)
-        return (base + datetime.timedelta(hours=offset_hours)).isoformat() + "Z"
+        return (base + datetime.timedelta(hours=offset_hours)).isoformat()
 
+    # Strip any timezone markers (Z, +HH:MM, -HH:MM) — the AI returns local time
     dt_str = str(dt_str).strip().replace(" ", "T")
-    if not dt_str.endswith("Z") and "+" not in dt_str[-6:]:
-        dt_str += "Z"
+    dt_str = re.sub(r'Z$', '', dt_str)
+    dt_str = re.sub(r'[+-]\d{2}:?\d{2}$', '', dt_str)
 
     try:
-        parsed = datetime.datetime.fromisoformat(dt_str.rstrip("Z"))
-        return (parsed + datetime.timedelta(hours=offset_hours)).isoformat() + "Z"
+        parsed = datetime.datetime.fromisoformat(dt_str)
+        return (parsed + datetime.timedelta(hours=offset_hours)).isoformat()
     except ValueError:
         base = datetime.datetime.utcnow() + datetime.timedelta(days=1)
         base = base.replace(hour=10, minute=0, second=0, microsecond=0)
-        return (base + datetime.timedelta(hours=offset_hours)).isoformat() + "Z"
+        return (base + datetime.timedelta(hours=offset_hours)).isoformat()
 
 
 # ─── Main router ──────────────────────────────────────────────────────────
@@ -736,30 +759,49 @@ def execute_command(intent, access_token, refresh_token, overrides=None):
         # ── Calendar ────────────────────────────────────────────────────────
         elif service == "calendar":
             if action in ("schedule", "create", "add", "book"):
+                _ov = overrides or {}
+                # _cal_* overrides come from the frontend preview modal edits
+                user_tz = _ov.get("_timezone") or params.get("_timezone") or "UTC"
+
                 summary = (
+                    _ov.get("_cal_summary") or
                     params.get("summary") or params.get("title") or
                     params.get("event") or params.get("meeting") or "New Meeting"
                 )
-                start_iso = _resolve_datetime(
+                start_raw = (
+                    _ov.get("_cal_start_time") or
                     params.get("start_time") or params.get("start") or
                     params.get("datetime") or params.get("date")
                 )
-                end_iso = _resolve_datetime(params.get("end_time") or params.get("end"))
-                if not (params.get("end_time") or params.get("end")):
-                    start_dt = datetime.datetime.fromisoformat(start_iso.rstrip("Z"))
-                    end_iso = (start_dt + datetime.timedelta(hours=1)).isoformat() + "Z"
+                end_raw = (
+                    _ov.get("_cal_end_time") or
+                    params.get("end_time") or params.get("end")
+                )
+                start_iso = _resolve_datetime(start_raw)
+                if end_raw:
+                    end_iso = _resolve_datetime(end_raw)
+                else:
+                    start_dt = datetime.datetime.fromisoformat(start_iso)
+                    end_iso = (start_dt + datetime.timedelta(hours=1)).isoformat()
 
-                attendees = params.get("attendees") or []
-                if isinstance(attendees, str):
-                    attendees = [a.strip() for a in attendees.split(",")]
-                for key in ("attendee", "with"):
-                    if params.get(key):
-                        attendees.append(params[key])
+                if _ov.get("_cal_attendees") is not None:
+                    attendees = _ov["_cal_attendees"]
+                else:
+                    attendees = params.get("attendees") or []
+                    if isinstance(attendees, str):
+                        attendees = [a.strip() for a in attendees.split(",")]
+                    for key in ("attendee", "with"):
+                        if params.get(key):
+                            attendees.append(params[key])
 
-                description = params.get("description") or params.get("notes") or ""
+                description = (
+                    _ov.get("_cal_description") or
+                    params.get("description") or params.get("notes") or ""
+                )
                 return calendar_create(
                     access_token, refresh_token,
                     summary, start_iso, end_iso, attendees, description,
+                    user_timezone=user_tz,
                 )
 
             elif action in ("search", "find", "list"):

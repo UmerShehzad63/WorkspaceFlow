@@ -275,7 +275,7 @@ export default function DashboardLayout({ children }) {
                 className="btn btn-primary"
                 style={{ width: '100%', fontSize: '0.82rem', border: 'none', fontFamily: 'inherit', cursor: 'pointer' }}
               >
-                Upgrade to Pro — $9/mo
+                View Plans
               </button>
             )}
             {plan === 'pro' && (

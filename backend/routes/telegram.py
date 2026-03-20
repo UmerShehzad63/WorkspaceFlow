@@ -87,7 +87,7 @@ async def _get_profile(user_id: str) -> dict | None:
     url = (
         f"{supabase_url}/rest/v1/profiles"
         f"?id=eq.{user_id}"
-        f"&select=id,plan,google_access_token,google_refresh_token"
+        f"&select=id,plan,google_access_token,google_refresh_token,timezone"
     )
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url, headers=_sb_headers())
@@ -628,7 +628,8 @@ async def _execute_email_send(chat_id: str, intent: dict,
 # ── NL command handler ────────────────────────────────────────────────────────
 
 async def _handle_nl_command(chat_id: str, text: str, user_id: str,
-                              access_token: str, refresh_token: str | None):
+                              access_token: str, refresh_token: str | None,
+                              user_timezone: str = "UTC"):
     """
     Parse and execute a natural language command via the AI engine.
     Gmail Send → multi-step compose flow.
@@ -684,6 +685,9 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
 
     # Lock session: task + service for this conversation
     _sessions[chat_id] = {"task": _detect_task(service, action), "service": service}
+
+    # Inject user timezone so calendar_create uses the correct local time
+    intent.setdefault("parameters", {})["_timezone"] = user_timezone
 
     # Gmail Send/Reply → AI generates subject+body, then shows preview
     if service == "gmail" and action in ("send", "reply"):
@@ -818,6 +822,7 @@ async def telegram_webhook(request: Request):
         profile       = await _get_profile(user_id)
         access_token  = (profile or {}).get("google_access_token")
         refresh_token = (profile or {}).get("google_refresh_token")
+        user_timezone = (profile or {}).get("timezone") or "UTC"
 
         conv = _conv.get(chat_id, {})
         intent  = conv.get("intent", {})
@@ -906,6 +911,8 @@ async def telegram_webhook(request: Request):
             }
 
             action = (intent.get("action") or "").lower()
+            # Inject user timezone for calendar commands
+            intent.setdefault("parameters", {})["_timezone"] = user_timezone
             await _clear_kb(chat_id, message_id)
             if chosen_service == "gmail" and action in ("send", "reply"):
                 status_msg = await send_message(chat_id, "📧 Preparing email…")
@@ -1056,6 +1063,7 @@ async def telegram_webhook(request: Request):
     profile       = await _get_profile(user_id)
     access_token  = (profile or {}).get("google_access_token")
     refresh_token = (profile or {}).get("google_refresh_token")
+    user_timezone = (profile or {}).get("timezone") or "UTC"
 
     # ── /cancel — clear any active conversation state ────────────────────────
     if command == "cancel":
@@ -1084,6 +1092,7 @@ async def telegram_webhook(request: Request):
                     "task":    _detect_task(sniffed, (intent.get("action") or "")),
                     "service": sniffed,
                 }
+                intent.setdefault("parameters", {})["_timezone"] = user_timezone
                 _conv.pop(chat_id, None)
                 action_lower = (intent.get("action") or "").lower()
                 if sniffed == "gmail" and action_lower in ("send", "reply"):
@@ -1164,7 +1173,7 @@ async def telegram_webhook(request: Request):
                     if not access_token:
                         await send_message(chat_id, "⚠️ Google account not connected.")
                         return JSONResponse({"ok": True})
-                    await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
+                    await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token, user_timezone)
             return JSONResponse({"ok": True})
 
         if state == "wait_edit":

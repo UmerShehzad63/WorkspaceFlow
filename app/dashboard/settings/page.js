@@ -235,7 +235,7 @@ export default function SettingsPage() {
           </div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <a href="/pricing" className="btn btn-primary">
-              Upgrade to Pro — $9/mo
+              View Plans
             </a>
             <button
               onClick={handleManagePlan}
@@ -245,6 +245,27 @@ export default function SettingsPage() {
               {managingPlan ? 'Opening Portal...' : 'Manage Billing'}
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Support */}
+      <div className={styles.settingsSection}>
+        <h3 className={styles.settingsLabel}>💬 Support</h3>
+        <div className={styles.planCard}>
+          <div className={styles.planInfo}>
+            <span className={styles.planIcon}>✉️</span>
+            <div>
+              <strong>Contact Us</strong>
+              <p>Have a question or need help? We&apos;re here for you.</p>
+            </div>
+          </div>
+          <a
+            href="mailto:support@workspaceflow.app"
+            className="btn btn-secondary"
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            Email Support
+          </a>
         </div>
       </div>
     </div>

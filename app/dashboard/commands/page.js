@@ -115,11 +115,20 @@ export default function CommandsPage() {
 
   const handlePreviewCancel = () => setEmailPreview(null);
 
-  const handleCalendarConfirm = async () => {
+  const handleCalendarConfirm = async (editedParams) => {
     if (!calendarPreview) return;
     const preview = calendarPreview;
     setCalendarPreview(null);
-    await runCommand(preview.commandText, preview.overrides || {}, true);
+    const overrides = {
+      ...(preview.overrides || {}),
+      _cal_summary:     editedParams.summary,
+      _cal_start_time:  editedParams.start_time,
+      _cal_end_time:    editedParams.end_time,
+      _cal_attendees:   editedParams.attendees,
+      _cal_description: editedParams.description,
+      _timezone:        preview.intent?.parameters?._timezone || 'UTC',
+    };
+    await runCommand(preview.commandText, overrides, true);
   };
   const handleCalendarCancel = () => setCalendarPreview(null);
 
