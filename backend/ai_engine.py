@@ -209,7 +209,7 @@ Command: "{command}"
 Return ONLY a valid JSON object with these exact keys:
 {{
   "service": "Gmail" | "Calendar" | "Drive" | "Unsupported",
-  "action":  "Send" | "Reply" | "Search" | "Archive" | "Create" | "List" | "None",
+  "action":  "Send" | "Reply" | "Search" | "Archive" | "Create" | "List" | "Delete" | "None",
   "parameters": {{
     // Gmail Send/Reply:       "to", "subject" (optional), "body" (optional), "drive_file" (optional filename)
     // Gmail Search/Archive:   "from", "subject", "query", "label", "max_results"
@@ -231,6 +231,7 @@ ROUTING RULES — follow in strict priority order:
    - find emails / search inbox / what did X say / read emails → Gmail / Search
    - schedule / book / create meeting / add event / set up a call → Calendar / Create
    - remind me / add reminder → Calendar / Create (create an event as reminder)
+   - delete / remove / clear / cancel [events/meetings/day] → Calendar / Delete
    - how many events/meetings / what's on my calendar / list my events / do I have anything → Calendar / List
    - find keyword on calendar → Calendar / Search (keyword query, no date range)
    - find file / search drive / look for document → Drive / Search
@@ -243,6 +244,12 @@ ROUTING RULES — follow in strict priority order:
    - "tomorrow"  → date_range_start="{tomorrow}T00:00:00",    date_range_end="{tomorrow}T23:59:59"
    - Other dates: compute ISO from TODAY={today_iso}
    - When using date range, set "query" to null (do NOT filter by keyword like "meetings")
+
+3. CALENDAR DELETE with date range — resolve dates same as LIST above:
+   - "clear my day for tomorrow" → date_range_start="{tomorrow}T00:00:00", date_range_end="{tomorrow}T23:59:59"
+   - "remove all meetings today" → date_range_start="{today_iso}T00:00:00", date_range_end="{today_iso}T23:59:59"
+   - "cancel my 3pm" → date_range_start="{today_iso}T15:00:00", date_range_end="{today_iso}T16:00:00", query="3pm"
+   - "delete meeting with X" → query="X" (no date range if not specified)
 
 3. GMAIL SEND rules:
    - "to" = name or email exactly as given (system resolves names to emails)
@@ -265,6 +272,8 @@ ROUTING RULES — follow in strict priority order:
    "schedule standup tomorrow 9am"         → Calendar/Create, summary="Standup", start_time="{tomorrow}T09:00:00"
    "remind me about the budget review at 3pm" → Calendar/Create, summary="Budget review reminder", start_time="{today_iso}T15:00:00"
    "archive all newsletters"               → Gmail/Archive, query="newsletter"
+   "clear my day tomorrow" → Calendar/Delete, date_range_start="{tomorrow}T00:00:00", date_range_end="{tomorrow}T23:59:59"
+   "remove all meetings today" → Calendar/Delete, date_range_start="{today_iso}T00:00:00", date_range_end="{today_iso}T23:59:59"
 """
 
     messages = [

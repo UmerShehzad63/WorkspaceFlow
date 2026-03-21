@@ -172,7 +172,7 @@ async def send_daily_briefings() -> dict:
         plan    = (user.get("plan") or "free").lower()
 
         # ── Subscription check (once per day at briefing time) ─────────────
-        if plan not in ("pro", "pro_plus", "trialing", "pro_trial"):
+        if plan not in ("pro", "pro_plus", "trialing", "pro_trial", "active"):
             # User had Telegram connected but is no longer on a paid plan.
             # Send ONE expiry notification, then stay silent forever.
             if user_id not in _expiry_notified and user.get("last_briefing_sent"):
@@ -230,6 +230,16 @@ async def send_daily_briefings() -> dict:
 
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 
+async def _keepalive_ping():
+    """Ping the backend health endpoint every 10 min to prevent Render free tier from sleeping."""
+    backend_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("NEXT_PUBLIC_BACKEND_URL") or "http://localhost:8000"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            await client.get(f"{backend_url}/health")
+    except Exception:
+        pass  # keepalive is best-effort
+
+
 def start_scheduler():
     """Start the scheduler. Call once at FastAPI startup."""
     scheduler.add_job(
@@ -238,6 +248,13 @@ def start_scheduler():
         id="daily_briefings",
         replace_existing=True,
         misfire_grace_time=120,
+    )
+    scheduler.add_job(
+        _keepalive_ping,
+        CronTrigger(minute="*/10"),  # every 10 min — prevents Render free tier sleep
+        id="keepalive",
+        replace_existing=True,
+        misfire_grace_time=60,
     )
     scheduler.start()
     job_count = len(scheduler.get_jobs())

@@ -673,6 +673,53 @@ def calendar_create(access_token, refresh_token, summary, start_iso, end_iso,
     }
 
 
+def calendar_delete(access_token, refresh_token, query="", time_min=None, time_max=None, user_timezone="UTC"):
+    """
+    Find and delete calendar events in the given time range / matching query.
+    Returns dict with deleted count and list of deleted event titles.
+    """
+    creds = _build_creds(access_token, refresh_token)
+    svc   = _calendar_service(creds)
+
+    if time_min is None:
+        time_min = datetime.datetime.utcnow().isoformat() + "Z"
+
+    kwargs = {
+        "calendarId":   "primary",
+        "timeMin":      time_min,
+        "maxResults":   50,
+        "singleEvents": True,
+        "orderBy":      "startTime",
+    }
+    if time_max:
+        kwargs["timeMax"] = time_max
+    if query:
+        kwargs["q"] = query
+
+    result = svc.events().list(**kwargs).execute()
+    events = result.get("items", [])
+
+    deleted_events = []
+    errors = 0
+    for event in events:
+        try:
+            svc.events().delete(calendarId="primary", eventId=event["id"]).execute()
+            start = event.get("start", {})
+            deleted_events.append({
+                "title": event.get("summary", "(No title)"),
+                "start": start.get("dateTime") or start.get("date", ""),
+            })
+        except Exception:
+            errors += 1
+
+    return {
+        "type":           "calendar_delete",
+        "deleted":        len(deleted_events),
+        "errors":         errors,
+        "deleted_events": deleted_events,
+    }
+
+
 # ─── Intent routing helpers ────────────────────────────────────────────────
 
 def _build_gmail_query(params):
@@ -884,7 +931,15 @@ def execute_command(intent, access_token, refresh_token, overrides=None, user_ti
 
         # ── Calendar ────────────────────────────────────────────────────────
         elif service == "calendar":
-            if action in ("schedule", "create", "add", "book"):
+            if action in ("delete", "remove", "clear", "cancel"):
+                time_min = _local_to_rfc3339(params.get("date_range_start"), user_timezone)
+                time_max = _local_to_rfc3339(params.get("date_range_end"), user_timezone)
+                query    = params.get("query") or params.get("title") or params.get("summary") or ""
+                return calendar_delete(access_token, refresh_token,
+                                       query=query, time_min=time_min, time_max=time_max,
+                                       user_timezone=user_timezone)
+
+            elif action in ("schedule", "create", "add", "book"):
                 _ov = overrides or {}
                 # _cal_* overrides come from the frontend preview modal edits
                 user_tz = _ov.get("_timezone") or params.get("_timezone") or "UTC"

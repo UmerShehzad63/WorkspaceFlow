@@ -512,7 +512,7 @@ async def send_preview(request: Request):
     loop = asyncio.get_event_loop()
 
     # Priority 1: Telegram (Pro/Pro Plus/trial only, if connected)
-    if plan in ("pro", "pro_plus", "trialing", "pro_trial"):
+    if plan in ("pro", "pro_plus", "trialing", "pro_trial", "active"):
         tg_conn_url = (
             f"{supabase_url}/rest/v1/telegram_connections"
             f"?user_id=eq.{user_id}"

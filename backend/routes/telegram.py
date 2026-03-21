@@ -191,6 +191,30 @@ def _fmt_date(date_str: str) -> str:
         return date_str[:20]
 
 
+def _fmt_event_dt(dt_str: str, user_timezone: str = "UTC") -> str:
+    """
+    Parse an RFC 3339 event dateTime and format in user's local timezone.
+    Returns e.g. "Sun, Mar 22 · 9:00 PM"
+    """
+    if not dt_str:
+        return "?"
+    s = dt_str.strip()
+    try:
+        from zoneinfo import ZoneInfo
+        import datetime as _dt
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = _dt.datetime.fromisoformat(s)
+        local_dt = dt.astimezone(ZoneInfo(user_timezone))
+        hour = int(local_dt.strftime("%I"))
+        hour_str = str(hour)
+        minute = local_dt.strftime("%M")
+        ampm   = local_dt.strftime("%p")
+        return f"{local_dt.strftime('%a')}, {local_dt.strftime('%b')} {local_dt.day} · {hour_str}:{minute} {ampm}"
+    except Exception:
+        return s[:16].replace("T", " ")
+
+
 def _extract_sender(raw_from: str) -> str:
     """Extract display name from 'Name <email@x.com>' or return email."""
     if not raw_from:
@@ -252,7 +276,7 @@ def _format_email_list(messages: list) -> str:
     return header + body
 
 
-def _format_nl_result(result: dict) -> str:
+def _format_nl_result(result: dict, user_timezone: str = "UTC") -> str:
     """Convert a command_executor result dict to readable Telegram HTML."""
     t = result.get("type", "")
 
@@ -277,7 +301,12 @@ def _format_nl_result(result: dict) -> str:
         header = f"📅 <b>{summary}</b>" if summary else f"📅 <b>{len(events)} event{'s' if len(events) != 1 else ''}</b>"
         lines  = [header]
         for i, e in enumerate(events[:10]):
-            start = (e.get("start") or "")[:16].replace("T", " ")
+            raw_start = e.get("start") or ""
+            # Use date-only for all-day events, otherwise convert to local time
+            if len(raw_start) == 10:
+                start = raw_start  # all-day event
+            else:
+                start = _fmt_event_dt(raw_start, user_timezone)
             title = e.get("title") or "Event"
             entry = f"\n{i+1}. <b>{title}</b>"
             if start:
@@ -296,6 +325,21 @@ def _format_nl_result(result: dict) -> str:
         if link:
             text += f'\n<a href="{link}">Open in Calendar</a>'
         return text
+
+    if t == "calendar_delete":
+        n = result.get("deleted", 0)
+        if n == 0:
+            return "📅 No events found to delete."
+        lines = [f"✅ <b>Deleted {n} event{'s' if n != 1 else ''}</b>"]
+        for ev in result.get("deleted_events", [])[:5]:
+            title = ev.get("title", "(No title)")
+            start = ev.get("start", "")
+            if start:
+                start = _fmt_event_dt(start, user_timezone)
+                lines.append(f"  • {title} — {start}")
+            else:
+                lines.append(f"  • {title}")
+        return "\n".join(lines)
 
     if t == "drive_search":
         files = result.get("files", [])
@@ -707,9 +751,29 @@ async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
                 params["_drive_file_id"]       = file_cands[0]["id"]
                 params["_drive_file_name"]     = file_cands[0]["name"]
                 params["_drive_file_resolved"] = True
-            else:
-                # Multiple — let execute_command return needs_disambiguation/file
-                pass
+            elif len(file_cands) > 1:
+                # Multiple files — show picker immediately, do NOT fall through to email preview
+                kb_rows = []
+                for i, fc in enumerate(file_cands[:5]):
+                    label = f"📄 {fc.get('name', 'File')}"
+                    kb_rows.append([InlineKeyboardButton(label, callback_data=f"drive_file:{i}")])
+                kb_rows.append([InlineKeyboardButton("📧 Send Without Attachment", callback_data="drive:skip")])
+                kb_rows.append([InlineKeyboardButton("❌ Cancel",                  callback_data="email:cancel")])
+                msg = await send_message(
+                    chat_id,
+                    f"📁 <b>Multiple files found for '{drive_file}'</b>\nWhich one do you want to attach?",
+                    reply_markup=InlineKeyboardMarkup(kb_rows),
+                )
+                _conv[chat_id] = {
+                    "state":            "wait_drive_pick",
+                    "intent":           intent,
+                    "user_id":          user_id,
+                    "original_command": original_command,
+                    "drive_candidates": [{"id": fc["id"], "name": fc["name"]} for fc in file_cands[:5]],
+                    "after_pick":       "generate_preview",   # show email preview after picking
+                    "confirm_message_id": (msg or {}).get("message_id"),
+                }
+                return   # wait for user to pick — do NOT fall through
 
     # Step 3 — generate email + show preview
     await _generate_and_preview(chat_id, intent, user_id, original_command,
@@ -820,11 +884,94 @@ async def _execute_email_send(chat_id: str, intent: dict,
                 await send_message(chat_id, f"✅ Email sent to <b>{to}</b>")
                 return
 
-        await send_message(chat_id, _format_nl_result(result))
+        await send_message(chat_id, _format_nl_result(result, "UTC"))
 
     except Exception as e:
         logger.exception("[Telegram] Email send failed for chat_id=%s", chat_id)
         await send_message(chat_id, f"❌ Email failed: {str(e)[:300]}")
+
+
+# ── Calendar delete flow ──────────────────────────────────────────────────────
+
+async def _handle_calendar_delete(chat_id: str, intent: dict, user_id: str,
+                                   access_token: str, refresh_token: str | None,
+                                   user_timezone: str = "UTC"):
+    """
+    Calendar delete flow: list events → confirm → delete.
+    Step 1: fetch and show matching events.
+    Step 2: ask YES/NO.
+    Step 3: on YES, delete them all.
+    """
+    from command_executor import execute_command, _build_creds, _local_to_rfc3339, _calendar_service
+
+    params   = intent.get("parameters", {})
+    time_min = _local_to_rfc3339(params.get("date_range_start"), user_timezone)
+    time_max = _local_to_rfc3339(params.get("date_range_end"), user_timezone)
+    query    = params.get("query") or params.get("title") or ""
+
+    status_msg = await send_message(chat_id, "🔍 Finding events…")
+    status_id  = (status_msg or {}).get("message_id")
+
+    try:
+        loop   = asyncio.get_event_loop()
+        creds  = await loop.run_in_executor(
+            None, functools.partial(_build_creds, access_token, refresh_token)
+        )
+        svc    = _calendar_service(creds)
+
+        from command_executor import calendar_search
+        search_result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                calendar_search, access_token, refresh_token,
+                query=query, time_min=time_min, time_max=time_max,
+                display_start=params.get("date_range_start"),
+                display_end=params.get("date_range_end"),
+            )
+        )
+    except Exception as e:
+        await send_message(chat_id, f"❌ Could not fetch events: {str(e)[:200]}")
+        return
+
+    events = search_result.get("events", [])
+    if not events:
+        summary = search_result.get("summary", "No events found.")
+        if status_id:
+            await edit_message_text(chat_id, status_id, f"📅 {summary}\n\nNothing to delete.")
+        else:
+            await send_message(chat_id, f"📅 {summary}\n\nNothing to delete.")
+        return
+
+    # Build confirmation message
+    lines = [f"🗑 <b>Found {len(events)} event{'s' if len(events) != 1 else ''} to delete:</b>\n"]
+    for i, e in enumerate(events[:8]):
+        raw_start = e.get("start") or ""
+        start = raw_start if len(raw_start) == 10 else _fmt_event_dt(raw_start, user_timezone)
+        lines.append(f"{i+1}. <b>{e.get('title','Event')}</b>")
+        if start:
+            lines.append(f"   📅 {start}")
+    if len(events) > 8:
+        lines.append(f"\n…and {len(events) - 8} more.")
+    lines.append("\n<b>Delete all of these?</b>")
+
+    del_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🗑 Yes, Delete All", callback_data="cal_delete:confirm"),
+        InlineKeyboardButton("❌ No, Cancel",      callback_data="cal_delete:cancel"),
+    ]])
+
+    if status_id:
+        await edit_message_text(chat_id, status_id, "\n".join(lines), reply_markup=del_kb)
+    else:
+        await send_message(chat_id, "\n".join(lines), reply_markup=del_kb)
+
+    _conv[chat_id] = {
+        "state":        "wait_delete_confirm",
+        "intent":       intent,
+        "user_id":      user_id,
+        "events":       events,
+        "user_timezone": user_timezone,
+        "status_message_id": status_id,
+    }
 
 
 # ── Route confirmed intent ────────────────────────────────────────────────────
@@ -844,6 +991,12 @@ async def _route_intent(chat_id: str, intent: dict, user_id: str,
         status_msg = await send_message(chat_id, "📧 Preparing email…")
         await _advance_email_send(chat_id, intent, user_id, original_command,
                                   status_message_id=(status_msg or {}).get("message_id"))
+        return
+
+    # Calendar delete — show events first, then ask user to confirm deletion
+    if service == "calendar" and action in ("delete", "remove", "clear", "cancel"):
+        await _handle_calendar_delete(chat_id, intent, user_id,
+                                      access_token, refresh_token, user_timezone)
         return
 
     # For calendar creates, get precise timezone from Google Calendar API if profile only has UTC
@@ -895,7 +1048,7 @@ async def _route_intent(chat_id: str, intent: dict, user_id: str,
         await send_message(chat_id, "\n".join(lines))
         return
 
-    await _send_long(chat_id, _format_nl_result(result))
+    await _send_long(chat_id, _format_nl_result(result, user_timezone))
 
 
 # ── NL command handler ────────────────────────────────────────────────────────
@@ -980,25 +1133,10 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
                     _conv[chat_id]["status_message_id"] = msg.get("message_id")
             return
 
-    # Show intent confirmation — user confirms before we execute anything
-    desc = _intent_human_description(intent)
-    _conv[chat_id] = {
-        "state":            "wait_intent_confirm",
-        "intent":           intent,
-        "user_id":          user_id,
-        "original_command": text,
-        "access_token":     access_token,
-        "refresh_token":    refresh_token,
-        "user_timezone":    user_timezone,
-    }
-    confirm_text = f"🔍 <b>Understood:</b> {desc}"
+    # Execute directly — no confirmation step (email/event preview is the only confirmation needed)
     if status_message_id:
-        await edit_message_text(chat_id, status_message_id, confirm_text,
-                                reply_markup=_INTENT_CONFIRM_KB)
-    else:
-        msg = await send_message(chat_id, confirm_text, reply_markup=_INTENT_CONFIRM_KB)
-        if msg:
-            _conv[chat_id]["confirm_message_id"] = msg.get("message_id")
+        await edit_message_text(chat_id, status_message_id, "⏳ Processing…")
+    await _route_intent(chat_id, intent, user_id, access_token, refresh_token, text, user_timezone)
 
 
 # ── REST endpoints ────────────────────────────────────────────────────────────
@@ -1129,6 +1267,45 @@ async def telegram_webhook(request: Request):
             await _clear_kb(chat_id, message_id)
             await _execute_email_send(chat_id, intent_skip, access_token, refresh_token, user_id)
 
+        # ── cal_delete: confirm / cancel ──────────────────────────────────────────
+        elif cq_data == "cal_delete:confirm":
+            stored_conv = _conv.pop(chat_id, {})
+            events      = stored_conv.get("events", [])
+            stored_tz   = stored_conv.get("user_timezone", user_timezone)
+            await _clear_kb(chat_id, message_id)
+            if not events:
+                await send_message(chat_id, "No events to delete.")
+                return JSONResponse({"ok": True})
+            await send_message(chat_id, "🗑 Deleting events…")
+            try:
+                from command_executor import _build_creds, _calendar_service
+                loop   = asyncio.get_event_loop()
+                creds  = await loop.run_in_executor(
+                    None, functools.partial(_build_creds, access_token, refresh_token)
+                )
+                svc    = _calendar_service(creds)
+                deleted = 0
+                for e in events:
+                    try:
+                        await loop.run_in_executor(
+                            None,
+                            lambda eid=e["id"]: svc.events().delete(calendarId="primary", eventId=eid).execute()
+                        )
+                        deleted += 1
+                    except Exception:
+                        pass
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, f"✅ Deleted <b>{deleted}</b> event{'s' if deleted != 1 else ''}.")
+            except Exception as ex:
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, f"❌ Delete failed: {str(ex)[:200]}")
+
+        elif cq_data == "cal_delete:cancel":
+            _conv.pop(chat_id, None)
+            _sessions.pop(chat_id, None)
+            await _clear_kb(chat_id, message_id)
+            await send_message(chat_id, "👋 Cancelled. No events were deleted.")
+
         # ── drive_file:N — user picks Drive file from disambiguation ──────────
         elif cq_data.startswith("drive_file:"):
             suffix = cq_data.split(":", 1)[1]
@@ -1136,15 +1313,24 @@ async def telegram_webhook(request: Request):
                 drive_cands = conv.get("drive_candidates", [])
                 idx = int(suffix)
                 if 0 <= idx < len(drive_cands):
-                    chosen_file = drive_cands[idx]
-                    intent_df   = conv.get("intent", intent)
-                    p_df        = intent_df.setdefault("parameters", {})
+                    chosen_file   = drive_cands[idx]
+                    after_pick    = conv.get("after_pick", "execute")
+                    orig_cmd_df   = conv.get("original_command", "")
+                    intent_df     = conv.get("intent", intent)
+                    p_df          = intent_df.setdefault("parameters", {})
                     p_df["_drive_file_id"]       = chosen_file["id"]
                     p_df["_drive_file_name"]      = chosen_file["name"]
                     p_df["_drive_file_resolved"]  = True
                     _conv.pop(chat_id, None)
                     await _clear_kb(chat_id, message_id)
-                    await _execute_email_send(chat_id, intent_df, access_token, refresh_token, user_id)
+                    if after_pick == "generate_preview":
+                        # File was picked during compose flow — generate email and show preview
+                        status_msg2 = await send_message(chat_id, "📧 Preparing email…")
+                        await _generate_and_preview(chat_id, intent_df, user_id, orig_cmd_df,
+                                                     status_message_id=(status_msg2 or {}).get("message_id"))
+                    else:
+                        # File was picked during execution — execute directly
+                        await _execute_email_send(chat_id, intent_df, access_token, refresh_token, user_id)
 
         elif cq_data == "email:edit_subject":
             _conv[chat_id] = {**conv, "state": "wait_edit_method", "edit_field": "subject"}
@@ -1232,7 +1418,7 @@ async def telegram_webhook(request: Request):
                         functools.partial(execute_command, intent, stored_access, stored_refresh, None, user_timezone),
                     )
                     _sessions.pop(chat_id, None)
-                    await _send_long(chat_id, _format_nl_result(result))
+                    await _send_long(chat_id, _format_nl_result(result, user_timezone))
                 except Exception as e:
                     _sessions.pop(chat_id, None)
                     await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
@@ -1257,26 +1443,6 @@ async def telegram_webhook(request: Request):
             _sessions.pop(chat_id, None)
             await _clear_kb(chat_id, message_id)
             await send_message(chat_id, "❌ Cancelled. Start a new request anytime.")
-
-        # ── intent: confirm / wrong ───────────────────────────────────────────
-        elif cq_data == "intent:confirm":
-            stored         = _conv.pop(chat_id, {})
-            intent_s       = stored.get("intent", {})
-            user_id_s      = stored.get("user_id", user_id)
-            orig_cmd_s     = stored.get("original_command", "")
-            stored_access  = stored.get("access_token",  access_token)
-            stored_refresh = stored.get("refresh_token", refresh_token)
-            stored_tz      = stored.get("user_timezone", user_timezone)
-            await _clear_kb(chat_id, message_id)
-            await _route_intent(chat_id, intent_s, user_id_s,
-                                stored_access, stored_refresh, orig_cmd_s, stored_tz)
-
-        elif cq_data == "intent:wrong":
-            _conv.pop(chat_id, None)
-            _sessions.pop(chat_id, None)
-            await _clear_kb(chat_id, message_id)
-            await send_message(chat_id,
-                               "No problem! Please rephrase your request and I'll try again. 👇")
 
         # ── edit_method: ai / replace ─────────────────────────────────────────
         elif cq_data == "edit_method:ai":
@@ -1438,31 +1604,6 @@ async def telegram_webhook(request: Request):
         params  = intent.setdefault("parameters", {})
         answer  = text.strip()
         upper   = answer.upper()
-
-        # ── wait_intent_confirm ───────────────────────────────────────────────
-        if state == "wait_intent_confirm":
-            if _is_cancel_text(answer):
-                _conv.pop(chat_id, None)
-                _sessions.pop(chat_id, None)
-                await send_message(chat_id, "👋 Okay, cancelled!")
-            elif _is_confirm_text(answer):
-                stored = _conv.pop(chat_id, {})
-                await _route_intent(
-                    chat_id,
-                    stored.get("intent", {}),
-                    stored.get("user_id", user_id),
-                    stored.get("access_token",  access_token),
-                    stored.get("refresh_token", refresh_token),
-                    stored.get("original_command", text),
-                    stored.get("user_timezone", user_timezone),
-                )
-            else:
-                desc = _intent_human_description(_conv[chat_id].get("intent", {}))
-                await send_message(chat_id,
-                                   f"I didn't quite get that. Is this correct? 👇\n\n"
-                                   f"🔍 <b>Understood:</b> {desc}",
-                                   reply_markup=_INTENT_CONFIRM_KB)
-            return JSONResponse({"ok": True})
 
         # ── wait_service_pick ─────────────────────────────────────────────────
         if state == "wait_service_pick":
@@ -1657,15 +1798,22 @@ async def telegram_webhook(request: Request):
                 _sessions.pop(chat_id, None)
                 await send_message(chat_id, "👋 Okay, cancelled!")
             elif answer.isdigit() and 1 <= int(answer) <= len(drive_cands):
-                chosen = drive_cands[int(answer) - 1]
-                params["_drive_file_id"]      = chosen["id"]
-                params["_drive_file_name"]    = chosen["name"]
+                chosen      = drive_cands[int(answer) - 1]
+                after_pick  = _conv[chat_id].get("after_pick", "execute")
+                orig_cmd_dp = _conv[chat_id].get("original_command", "")
+                params["_drive_file_id"]       = chosen["id"]
+                params["_drive_file_name"]     = chosen["name"]
                 params["_drive_file_resolved"] = True
                 _conv.pop(chat_id, None)
-                profile_dw = await _get_profile(user_id)
-                at_dw   = (profile_dw or {}).get("google_access_token") or access_token
-                ar_dw   = (profile_dw or {}).get("google_refresh_token") or refresh_token
-                await _execute_email_send(chat_id, intent, at_dw, ar_dw, user_id)
+                if after_pick == "generate_preview":
+                    status_dp = await send_message(chat_id, "📧 Preparing email…")
+                    await _generate_and_preview(chat_id, intent, user_id, orig_cmd_dp,
+                                                 status_message_id=(status_dp or {}).get("message_id"))
+                else:
+                    profile_dw = await _get_profile(user_id)
+                    at_dw  = (profile_dw or {}).get("google_access_token") or access_token
+                    ar_dw  = (profile_dw or {}).get("google_refresh_token") or refresh_token
+                    await _execute_email_send(chat_id, intent, at_dw, ar_dw, user_id)
             else:
                 kb_rows = []
                 for i, f in enumerate(drive_cands):
@@ -1676,6 +1824,48 @@ async def telegram_webhook(request: Request):
                 await send_message(chat_id,
                                    "Please pick a number or tap a button to choose the file:",
                                    reply_markup=InlineKeyboardMarkup(kb_rows))
+            return JSONResponse({"ok": True})
+
+        # ── wait_delete_confirm ───────────────────────────────────────────────
+        if state == "wait_delete_confirm":
+            events       = _conv[chat_id].get("events", [])
+            stored_tz    = _conv[chat_id].get("user_timezone", user_timezone)
+            if _is_cancel_text(answer) or upper in ("NO", "N"):
+                _conv.pop(chat_id, None)
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, "👋 Okay, cancelled! No events were deleted.")
+            elif _is_confirm_text(answer) or upper in ("YES", "Y", "DELETE", "DELETE ALL"):
+                _conv.pop(chat_id, None)
+                params  = intent.get("parameters", {})
+                from command_executor import _build_creds, _calendar_service
+                await send_message(chat_id, "🗑 Deleting events…")
+                try:
+                    loop   = asyncio.get_event_loop()
+                    creds  = await loop.run_in_executor(
+                        None, functools.partial(_build_creds, access_token, refresh_token)
+                    )
+                    svc    = _calendar_service(creds)
+                    deleted = 0
+                    for e in events:
+                        try:
+                            await loop.run_in_executor(
+                                None,
+                                lambda eid=e["id"]: svc.events().delete(calendarId="primary", eventId=eid).execute()
+                            )
+                            deleted += 1
+                        except Exception:
+                            pass
+                    _sessions.pop(chat_id, None)
+                    await send_message(chat_id, f"✅ Deleted <b>{deleted}</b> event{'s' if deleted != 1 else ''}.")
+                except Exception as ex:
+                    _sessions.pop(chat_id, None)
+                    await send_message(chat_id, f"❌ Delete failed: {str(ex)[:200]}")
+            else:
+                del_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🗑 Yes, Delete All", callback_data="cal_delete:confirm"),
+                    InlineKeyboardButton("❌ No, Cancel",      callback_data="cal_delete:cancel"),
+                ]])
+                await send_message(chat_id, "Please reply YES to delete or NO to cancel:", reply_markup=del_kb)
             return JSONResponse({"ok": True})
 
         # ── wait_ai_approve ───────────────────────────────────────────────────
