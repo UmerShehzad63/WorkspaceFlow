@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import styles from './rules.module.css';
+import { usePlan, isPro } from '../plan-context';
 
 // ─── Template definitions ──────────────────────────────────────────────────
 
@@ -694,26 +695,19 @@ export default function AutomationsPage() {
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [userEmail, setUserEmail] = useState('');
   const [toast, setToast] = useState(null); // {message, error?}
-  const [userPlan, setUserPlan] = useState('free');
+  const { plan: userPlan, openUpgrade } = usePlan();
 
   // Automation limits per plan
   const getAutomationLimit = (plan) => {
     if (plan === 'pro_plus') return Infinity;
-    if (['pro', 'trialing', 'pro_trial'].includes(plan)) return 5;
+    if (['pro', 'trialing', 'pro_trial', 'active'].includes(plan)) return 5;
     return 0; // free
   };
 
-  // Load user email + plan
+  // Load user email (plan comes from PlanContext)
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user) return;
-      if (session.user.email) setUserEmail(session.user.email);
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('plan')
-        .eq('id', session.user.id)
-        .single();
-      if (profile?.plan) setUserPlan(profile.plan.toLowerCase());
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.email) setUserEmail(session.user.email);
     });
   }, []);
 
@@ -731,7 +725,7 @@ export default function AutomationsPage() {
     if (automations.length >= limit) {
       setSetupTemplate(null);
       if (limit === 0) {
-        setToast({ message: 'Automations require a Pro plan. Upgrade to get started.', error: true });
+        openUpgrade();
       } else {
         setToast({ message: `You've reached the ${limit}-automation limit on Pro. Upgrade to Pro Plus for unlimited.`, error: true });
       }
@@ -829,6 +823,34 @@ export default function AutomationsPage() {
   };
 
   // ── Render ─────────────────────────────────────────────────────────────
+
+  if (!isPro(userPlan)) {
+    return (
+      <div>
+        <div className="page-header">
+          <h1>Automations</h1>
+          <p>Set-and-forget automations that run on schedule.</p>
+        </div>
+        <div className="card" style={{ padding: '48px 32px', textAlign: 'center', maxWidth: '480px' }}>
+          <div style={{ fontSize: '2.4rem', marginBottom: '16px' }}>🔄</div>
+          <span className="badge badge-pro" style={{ marginBottom: '14px', display: 'inline-block', fontSize: '0.7rem' }}>PRO</span>
+          <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+            Automations require Pro
+          </h3>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
+            Create rules that automatically archive emails, label messages, send follow-ups, and more — running on schedule without any manual work.
+          </p>
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px' }}
+            onClick={openUpgrade}
+          >
+            View Plans →
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

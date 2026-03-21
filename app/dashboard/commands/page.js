@@ -6,6 +6,7 @@ import ResultDisplay from '../components/ResultDisplay';
 import EmailSendPreviewModal from '../components/EmailSendPreviewModal';
 import CalendarCreatePreviewModal from '../components/CalendarCreatePreviewModal';
 import { useCommand } from '../command-context';
+import { usePlan, isPro } from '../plan-context';
 
 const EXAMPLES = [
   'Find the proposal Aisha sent me last month',
@@ -23,6 +24,7 @@ const SERVICE_ICONS = { Gmail: '📧', Calendar: '📅', Drive: '📁' };
 export default function CommandsPage() {
   // Sync command text with global context so "Try:" chips work from either bar
   const { cmdText: command, setCmdText: setCommand } = useCommand();
+  const { plan, openUpgrade } = usePlan();
 
   const [resultState,    setResultState]    = useState(null); // { intent, result } | { error } | null
   const [isExecuting,    setIsExecuting]    = useState(false);
@@ -97,6 +99,7 @@ export default function CommandsPage() {
     e.preventDefault();
     const trimmed = command.trim();
     if (!trimmed) return;
+    if (!isPro(plan)) { openUpgrade(); return; }
     await runCommand(trimmed);
   };
 

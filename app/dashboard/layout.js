@@ -7,11 +7,22 @@ import GlobalHeader from './components/GlobalHeader';
 import ResultDisplay from './components/ResultDisplay';
 import TelegramConnect from './components/TelegramConnect';
 import { CommandProvider, useCommand } from './command-context';
+import { PlanContext, isPro } from './plan-context';
 
 const SERVICE_ICONS = { Gmail: '📧', Calendar: '📅', Drive: '📁' };
 
 // ── Upgrade modal ────────────────────────────────────────────────────────────
-function UpgradeModal({ onClose }) {
+function UpgradeModal({ plan, onClose }) {
+  const hasPro    = isPro(plan);
+  const isProPlus = plan === 'pro_plus';
+
+  const greyBtn = {
+    display: 'block', width: '100%', textAlign: 'center', fontSize: '0.82rem',
+    padding: '8px 16px', borderRadius: 'var(--radius-sm)',
+    background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
+    border: '1px solid var(--border-color)', cursor: 'default',
+  };
+
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
@@ -20,7 +31,7 @@ function UpgradeModal({ onClose }) {
     }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{
         background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-        borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '520px',
+        borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '780px',
         padding: '28px', boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -28,25 +39,51 @@ function UpgradeModal({ onClose }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '4px 6px' }}>✕</button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-          {/* Pro */}
-          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
+
+          {/* FREE */}
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', opacity: hasPro ? 0.5 : 1 }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Free</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>$0<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>/mo</span></div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '14px 0 18px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
+              {[
+                { text: 'Daily email briefing', inc: true },
+                { text: 'View calendar events', inc: true },
+                { text: 'Basic Gmail read', inc: true },
+                { text: 'Command Bar', inc: false },
+                { text: 'Automations', inc: false },
+                { text: 'Telegram delivery', inc: false },
+              ].map(f => (
+                <li key={f.text} style={{ fontSize: '0.8rem', color: f.inc ? 'var(--text-secondary)' : 'var(--text-muted)', display: 'flex', gap: '6px' }}>
+                  <span style={{ color: f.inc ? 'var(--accent-green)' : 'rgba(239,68,68,0.7)' }}>{f.inc ? '✓' : '✗'}</span>{f.text}
+                </li>
+              ))}
+            </ul>
+            <button disabled style={greyBtn}>{!hasPro ? 'Current Plan' : 'Free Tier'}</button>
+          </div>
+
+          {/* PRO */}
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', opacity: isProPlus ? 0.5 : 1 }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Pro</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>$9<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>/mo</span></div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '14px 0 18px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
-              {['Everything in Free', '5 Automation rules', 'Telegram briefings', 'Command Bar'].map(f => (
+              {['Everything in Free', 'Command Bar', '5 Automation rules', 'Telegram briefings', 'AI email/calendar commands'].map(f => (
                 <li key={f} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', gap: '6px' }}>
                   <span style={{ color: 'var(--accent-green)' }}>✓</span>{f}
                 </li>
               ))}
             </ul>
-            <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem' }}>
-              Upgrade to Pro →
-            </Link>
+            {hasPro && !isProPlus
+              ? <button disabled style={greyBtn}>Current Plan</button>
+              : <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem' }}>Upgrade to Pro →</Link>
+            }
           </div>
 
-          {/* Pro Plus */}
-          <div style={{ background: 'rgba(52,211,153,0.04)', border: '1px solid rgba(52,211,153,0.2)', borderRadius: '12px', padding: '20px' }}>
+          {/* PRO PLUS */}
+          <div style={{ position: 'relative', background: 'rgba(52,211,153,0.04)', border: '1px solid rgba(52,211,153,0.35)', borderRadius: '12px', padding: '20px', boxShadow: '0 0 24px rgba(52,211,153,0.1)' }}>
+            <div style={{ position: 'absolute', top: '-11px', left: '50%', transform: 'translateX(-50%)', background: 'var(--accent-green)', color: '#000', fontSize: '0.6rem', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+              ⭐ Most Popular
+            </div>
             <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--accent-green)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Pro Plus</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>$19<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>/mo</span></div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '14px 0 18px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
@@ -56,10 +93,12 @@ function UpgradeModal({ onClose }) {
                 </li>
               ))}
             </ul>
-            <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem', background: 'var(--accent-green)', color: '#000' }}>
-              Upgrade to Pro Plus →
-            </Link>
+            {isProPlus
+              ? <button disabled style={greyBtn}>Current Plan</button>
+              : <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem', background: 'var(--accent-green)', color: '#000' }}>Upgrade to Pro Plus →</Link>
+            }
           </div>
+
         </div>
       </div>
     </div>
@@ -180,6 +219,7 @@ export default function DashboardLayout({ children }) {
   }
 
   return (
+    <PlanContext.Provider value={{ plan, openUpgrade: () => setShowUpgrade(true) }}>
     <CommandProvider>
       <div className="dashboard-layout" style={{ paddingTop: 0 }}>
         {/* ── Sidebar ───────────────────────────────────────────────────── */}
@@ -327,7 +367,8 @@ export default function DashboardLayout({ children }) {
         </div>
       </div>
 
-      {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} />}
+      {showUpgrade && <UpgradeModal plan={plan} onClose={() => setShowUpgrade(false)} />}
     </CommandProvider>
+    </PlanContext.Provider>
   );
 }

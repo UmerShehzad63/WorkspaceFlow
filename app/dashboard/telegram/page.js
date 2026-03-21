@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { usePlan, isPro } from '../plan-context';
 
 const BACKEND = () => process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 const BOT_USERNAME = 'workspace_flow_bot';
@@ -125,6 +126,37 @@ export default function TelegramPage() {
   };
 
   const isConnected = status?.connected;
+  const { plan, openUpgrade } = usePlan();
+
+  if (!isPro(plan)) {
+    return (
+      <div>
+        <div className="page-header">
+          <h1>Telegram</h1>
+          <p>Get your daily briefing delivered to Telegram.</p>
+        </div>
+        <div style={{ maxWidth: '480px' }}>
+          <div className="card" style={{ padding: '40px 32px', textAlign: 'center' }}>
+            <div style={{ fontSize: '2.8rem', marginBottom: '16px' }}>✈️</div>
+            <span className="badge badge-pro" style={{ marginBottom: '14px', display: 'inline-block', fontSize: '0.7rem' }}>PRO</span>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>
+              Telegram requires Pro
+            </h2>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
+              Upgrade to Pro to receive your daily briefing on Telegram and run AI commands directly from your phone.
+            </p>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px' }}
+              onClick={openUpgrade}
+            >
+              View Plans →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

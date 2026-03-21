@@ -2,10 +2,12 @@
 import { usePathname } from 'next/navigation';
 import styles from './GlobalHeader.module.css';
 import { useCommand } from '../command-context';
+import { usePlan, isPro } from '../plan-context';
 
 export default function GlobalHeader() {
   const pathname = usePathname();
   const { cmdText, setCmdText, isExecuting, runGlobalCommand } = useCommand();
+  const { plan, openUpgrade } = usePlan();
 
   // Hide on the Command Bar page — it has its own full input
   if (pathname === '/dashboard/commands') return null;
@@ -13,6 +15,7 @@ export default function GlobalHeader() {
   const execute = () => {
     const cmd = cmdText.trim();
     if (!cmd || isExecuting) return;
+    if (!isPro(plan)) { openUpgrade(); return; }
     setCmdText('');
     runGlobalCommand(cmd);
   };
