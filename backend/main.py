@@ -24,7 +24,7 @@ from email_service import send_automation_request_email, send_support_email, sen
 from routes.telegram import router as telegram_router
 from jobs.scheduler import start_scheduler, stop_scheduler
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── App lifecycle: start/stop scheduler + register Telegram webhook ─────────
@@ -272,28 +272,19 @@ async def run_command(request: Request):
             candidates = await loop.run_in_executor(
                 None, functools.partial(find_recipient_candidates, creds, to)
             )
-            if not candidates:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"No email found for '{to}' in your Gmail history. Please specify their email address directly.",
-                )
-            if len(candidates) == 1:
-                to = candidates[0]["email"]
-                params["to"] = to
-                params["_to_name"] = candidates[0].get("display_name", "")
-            else:
-                return {
-                    "intent": intent,
-                    "result": {
-                        "type": "needs_disambiguation",
-                        "kind": "recipient",
-                        "query": params.get("to", to),
-                        "candidates": candidates,
-                        "current_overrides": overrides,
-                    },
-                    "preview_only": False,
-                    "needs_disambiguation": True,
-                }
+            # Always show disambiguation: 0 candidates → ask for email, 1 → confirm, 2+ → pick
+            return {
+                "intent": intent,
+                "result": {
+                    "type": "needs_disambiguation",
+                    "kind": "recipient",
+                    "query": params.get("to", to),
+                    "candidates": candidates,
+                    "current_overrides": overrides,
+                },
+                "preview_only": False,
+                "needs_disambiguation": True,
+            }
 
         # ── Step 2: Generate email content ────────────────────────────────
         subject = (params.get("subject") or "").strip()
@@ -374,8 +365,9 @@ async def run_command(request: Request):
 
     try:
         loop   = asyncio.get_event_loop()
+        eff_timezone = req_timezone or user_timezone or "UTC"
         result = await loop.run_in_executor(
-            None, functools.partial(execute_command, intent, access_token, refresh_token, overrides)
+            None, functools.partial(execute_command, intent, access_token, refresh_token, overrides, eff_timezone)
         )
     except Exception as e:
         import re as _re
@@ -638,6 +630,29 @@ async def test_connectivity(request: Request):
             results["supabase_error"]     = str(e)
 
     return results
+
+
+# ── External Cron: send all due briefings ────────────────────────────────────
+@app.post("/api/briefing/send-all")
+@limiter.limit("10/minute")
+async def send_all_briefings(request: Request):
+    """
+    External cron endpoint — triggers daily briefings for all due users.
+    Secure with CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
+    Set up a free cron job at cron-job.org to hit this endpoint daily at your chosen time.
+    Example: POST https://workspaceflow-backend.onrender.com/api/briefing/send-all
+             Authorization: Bearer <your-CRON_SECRET>
+    """
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {cron_secret}":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    from jobs.scheduler import send_daily_briefings
+    print("[Cron] /api/briefing/send-all triggered")
+    await send_daily_briefings()
+    return {"success": True, "message": "Briefings job executed"}
 
 
 if __name__ == "__main__":

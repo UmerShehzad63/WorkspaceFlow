@@ -174,11 +174,18 @@ async def parse_command_intent(command: str, user_timezone: str = "UTC"):
     """
     from datetime import datetime, timedelta
 
-    today      = datetime.utcnow()
+    # Compute date anchors in the user's local timezone so "today/next week" matches what they see
+    try:
+        from zoneinfo import ZoneInfo
+        _user_tz = ZoneInfo(user_timezone)
+        today = datetime.now(_user_tz)
+    except Exception:
+        today = datetime.utcnow()
+
     today_iso  = today.strftime("%Y-%m-%d")
     tomorrow   = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Compute this-week and next-week boundaries (Monday–Sunday)
+    # Compute this-week and next-week boundaries in user's timezone (Monday–Sunday)
     days_since_monday  = today.weekday()                          # 0=Mon
     days_until_monday  = (7 - days_since_monday) % 7 or 7        # days to NEXT Mon
     this_monday  = (today - timedelta(days=days_since_monday)).strftime("%Y-%m-%d")

@@ -162,6 +162,41 @@ def _parse_message(m):
 
 # ─── Recipient name → email resolution ────────────────────────────────────
 
+def _search_google_contacts(creds, name):
+    """Search Google Contacts via People API. Returns [] on any error (scope may not be granted)."""
+    try:
+        svc = build("people", "v1", credentials=creds, cache_discovery=False)
+        # Try "Other Contacts" (auto-saved from Gmail interactions)
+        try:
+            res = svc.otherContacts().search(
+                query=name, readMask="names,emailAddresses", pageSize=10,
+            ).execute()
+            results = res.get("results", [])
+        except Exception:
+            results = []
+        # Fallback: saved contacts
+        if not results:
+            try:
+                res = svc.people().searchContacts(
+                    query=name, readMask="names,emailAddresses", pageSize=10,
+                ).execute()
+                results = res.get("results", [])
+            except Exception:
+                results = []
+        out = []
+        for r in results:
+            person = r.get("person", {})
+            names = person.get("names", [])
+            display_name = names[0].get("displayName", "") if names else ""
+            for em in person.get("emailAddresses", []):
+                email = em.get("value", "")
+                if email and "@" in email:
+                    out.append({"email": email, "display_name": display_name or email})
+        return out
+    except Exception:
+        return []
+
+
 def find_recipient_candidates(creds, name):
     """
     Search Gmail sent/received history for email addresses matching name.
@@ -195,9 +230,16 @@ def find_recipient_candidates(creds, name):
         el = email.lower()
         return any(p in el for p in _AUTO)
 
+    def _name_matches(display_name, search_name):
+        """True if any word from search_name appears in display_name (case-insensitive)."""
+        if not display_name:
+            return False
+        dl = display_name.lower()
+        return any(word in dl for word in search_name.lower().split() if len(word) >= 2)
+
     def collect(query, header_key):
         try:
-            res = svc.users().messages().list(userId="me", q=query, maxResults=10).execute()
+            res = svc.users().messages().list(userId="me", q=query, maxResults=20).execute()
             for msg_ref in res.get("messages", []):
                 m = svc.users().messages().get(
                     userId="me", id=msg_ref["id"],
@@ -208,6 +250,9 @@ def find_recipient_candidates(creds, name):
                 for disp, email in parse_addresses(headers.get(header_key, "")):
                     if _is_automated(email):
                         continue
+                    # Only include if display name matches the search name OR email contains the name
+                    if not _name_matches(disp or "", name) and name.lower() not in email.lower():
+                        continue
                     if email not in email_data:
                         email_data[email] = {"display_name": disp or email, "count": 0}
                     email_data[email]["count"] += 1
@@ -217,9 +262,9 @@ def find_recipient_candidates(creds, name):
             pass
 
     # Run ALL strategies — no early break so contacts from each source are merged
-    collect(f'to:"{name}" in:sent', "To")
-    collect(f'from:"{name}"', "From")
-    collect(f'"{name}" in:inbox', "From")
+    collect(f'to:{name} in:sent', "To")
+    collect(f'from:{name}', "From")
+    collect(f'{name} in:inbox', "From")
 
     # Fallback: search word-by-word for partial name matches
     # e.g. "aslam khan" → also try to:aslam in:sent, to:khan in:sent
@@ -228,6 +273,12 @@ def find_recipient_candidates(creds, name):
         for word in words:
             collect(f'to:{word} in:sent', "To")
             collect(f'from:{word}', "From")
+
+    # Also search Google Contacts (graceful fallback if scope not granted)
+    for c in _search_google_contacts(creds, name):
+        email = c["email"]
+        if not _is_automated(email) and email not in email_data:
+            email_data[email] = {"display_name": c["display_name"] or email, "count": 1}
 
     return sorted(
         [{"email": e, "display_name": d["display_name"], "count": d["count"]} for e, d in email_data.items()],
@@ -552,9 +603,14 @@ def calendar_search(access_token, refresh_token, query="", max_results=20,
             "link":      e.get("htmlLink", ""),
         })
 
-    # Build conversational summary
-    if time_max:
-        period = "in the selected period"
+    # Build conversational summary with date range if available
+    if time_min and time_max:
+        try:
+            start_dt = datetime.datetime.fromisoformat(time_min.rstrip("Z").split("+")[0])
+            end_dt   = datetime.datetime.fromisoformat(time_max.rstrip("Z").split("+")[0])
+            period   = f"({start_dt.day} {start_dt.strftime('%b')} – {end_dt.day} {end_dt.strftime('%b')})"
+        except Exception:
+            period = "in the selected period"
     elif query:
         period = f'for "{query}"'
     else:
@@ -652,21 +708,32 @@ def _resolve_datetime(dt_str, offset_hours=0):
         return (base + datetime.timedelta(hours=offset_hours)).isoformat()
 
 
-def _to_rfc3339(iso_str) -> str | None:
-    """Convert an ISO datetime string (possibly without TZ) to RFC 3339 with Z suffix for Google Calendar API."""
+def _local_to_rfc3339(iso_str, user_timezone="UTC") -> str | None:
+    """
+    Convert a local datetime string (from AI, in user's timezone) to RFC 3339 UTC.
+    This ensures Google Calendar API gets the correct absolute time.
+    """
     if not iso_str:
         return None
     s = str(iso_str).strip()
-    if len(s) == 10:          # date only "2026-03-23" → add midnight
-        return s + "T00:00:00Z"
-    if not s.endswith("Z") and "+" not in s[-6:]:
+    if len(s) == 10:          # date only "2026-03-23" → midnight local time
+        s += "T00:00:00"
+    # Already has timezone info — return as-is
+    if s.endswith("Z") or re.search(r'[+-]\d{2}:?\d{2}$', s):
+        return s
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(user_timezone)
+        dt_local = datetime.datetime.fromisoformat(s).replace(tzinfo=tz)
+        dt_utc = dt_local.astimezone(datetime.timezone.utc)
+        return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
         return s + "Z"
-    return s
 
 
 # ─── Main router ──────────────────────────────────────────────────────────
 
-def execute_command(intent, access_token, refresh_token, overrides=None):
+def execute_command(intent, access_token, refresh_token, overrides=None, user_timezone="UTC"):
     """
     Route an AI-parsed intent to the correct Google API call.
     Returns a result dict with a 'type' key.
@@ -855,15 +922,15 @@ def execute_command(intent, access_token, refresh_token, overrides=None):
 
             elif action in ("search", "find", "list"):
                 query    = params.get("query") or params.get("title") or params.get("summary") or ""
-                time_min = _to_rfc3339(params.get("date_range_start"))
-                time_max = _to_rfc3339(params.get("date_range_end"))
+                time_min = _local_to_rfc3339(params.get("date_range_start"), user_timezone)
+                time_max = _local_to_rfc3339(params.get("date_range_end"), user_timezone)
                 return calendar_search(access_token, refresh_token,
                                        query=query or "", time_min=time_min, time_max=time_max)
 
             else:
                 query    = params.get("query") or params.get("title") or ""
-                time_min = _to_rfc3339(params.get("date_range_start"))
-                time_max = _to_rfc3339(params.get("date_range_end"))
+                time_min = _local_to_rfc3339(params.get("date_range_start"), user_timezone)
+                time_max = _local_to_rfc3339(params.get("date_range_end"), user_timezone)
                 return calendar_search(access_token, refresh_token,
                                        query=query, time_min=time_min, time_max=time_max)
 

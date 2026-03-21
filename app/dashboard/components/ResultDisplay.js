@@ -186,6 +186,7 @@ function DriveSearchResult({ result }) {
 
 function RecipientDisambiguation({ result, onPick }) {
   const [manualEmail, setManualEmail] = useState('');
+  const count = result.candidates.length;
 
   const handleManual = () => {
     const trimmed = manualEmail.trim();
@@ -196,37 +197,46 @@ function RecipientDisambiguation({ result, onPick }) {
   return (
     <div>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '14px' }}>
-        Found {result.candidates.length} contact{result.candidates.length !== 1 ? 's' : ''} matching{' '}
-        <strong>&quot;{result.query}&quot;</strong>. Who did you mean?
+        {count === 0
+          ? <>I couldn&apos;t find <strong>&quot;{result.query}&quot;</strong> in your Gmail history or contacts. Enter their email address below.</>
+          : count === 1
+          ? <>Found one contact matching <strong>&quot;{result.query}&quot;</strong> — is this the right person?</>
+          : <>Found {count} contacts matching <strong>&quot;{result.query}&quot;</strong>. Who did you mean?</>}
       </p>
-      <div style={{
-        display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px',
-        maxHeight: result.candidates.length > 4 ? '240px' : 'none',
-        overflowY: result.candidates.length > 4 ? 'auto' : 'visible',
-        paddingRight: result.candidates.length > 4 ? '4px' : 0,
-      }}>
-        {result.candidates.map((c, i) => (
-          <button key={i} onClick={() => onPick({ recipient_email: c.email })}
-            style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '10px 14px', background: 'var(--bg-secondary)',
-              border: '1px solid var(--border-color)', borderRadius: '8px',
-              cursor: 'pointer', textAlign: 'left', width: '100%', flexShrink: 0,
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)', wordBreak: 'break-all' }}>{c.email}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                {c.display_name !== c.email ? c.display_name : ''}{c.display_name !== c.email ? ' · ' : ''}
-                emailed {c.count} time{c.count !== 1 ? 's' : ''}
+      {count > 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px',
+          maxHeight: count > 4 ? '240px' : 'none',
+          overflowY: count > 4 ? 'auto' : 'visible',
+          paddingRight: count > 4 ? '4px' : 0,
+        }}>
+          {result.candidates.map((c, i) => (
+            <button key={i} onClick={() => onPick({ recipient_email: c.email })}
+              style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '10px 14px', background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)', borderRadius: '8px',
+                cursor: 'pointer', textAlign: 'left', width: '100%', flexShrink: 0,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)', wordBreak: 'break-all' }}>{c.email}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                  {c.display_name !== c.email ? c.display_name : ''}{c.display_name !== c.email && c.count > 0 ? ' · ' : ''}
+                  {c.count > 0 ? `emailed ${c.count} time${c.count !== 1 ? 's' : ''}` : ''}
+                </div>
               </div>
-            </div>
-            <span style={{ fontSize: '0.78rem', color: 'var(--accent-blue)', flexShrink: 0, marginLeft: '12px' }}>Select →</span>
-          </button>
-        ))}
-      </div>
-      <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '8px' }}>Or enter email address manually:</p>
+              <span style={{ fontSize: '0.78rem', color: 'var(--accent-blue)', flexShrink: 0, marginLeft: '12px' }}>
+                {count === 1 ? 'Confirm →' : 'Select →'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ borderTop: count > 0 ? '1px solid var(--border-color)' : 'none', paddingTop: count > 0 ? '14px' : 0 }}>
+        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+          {count === 0 ? 'Enter their email address:' : 'Or enter email address manually:'}
+        </p>
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
             type="email"
