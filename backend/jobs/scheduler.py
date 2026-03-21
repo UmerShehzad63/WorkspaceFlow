@@ -145,22 +145,26 @@ def _is_due(user: dict, now_utc: datetime) -> bool:
 
 # ── Main job ────────────────────────────────────────────────────────────────
 
-async def send_daily_briefings():
+async def send_daily_briefings() -> dict:
     """
-    Called every 5 minutes by APScheduler.
+    Called every 5 minutes by APScheduler, and also by the /api/briefing/send-daily cron endpoint.
     Sends briefings to Pro/Pro Plus users whose configured time is in this window.
+    Returns {"sent": N, "skipped": M, "errors": P}.
     """
     now_utc = datetime.now(tz.utc)
     print(f"[Scheduler] Briefing job running at {now_utc.strftime('%H:%M UTC')}")
     users   = await _fetch_telegram_users()
 
+    sent = skipped = errors = 0
+
     if not users:
-        return
+        return {"sent": 0, "skipped": 0, "errors": 0}
 
     from services.telegram import format_briefing_telegram, send_message
 
     for user in users:
         if not _is_due(user, now_utc):
+            skipped += 1
             continue
 
         user_id = user["user_id"]
@@ -184,6 +188,7 @@ async def send_daily_briefings():
                 except Exception:
                     logger.exception("[Scheduler] Failed to send expiry notification to user %s", user_id)
             # Either way — skip the briefing
+            skipped += 1
             continue
 
         # ── Active pro/pro_plus user — send briefing ──────────────────────
@@ -206,6 +211,7 @@ async def send_daily_briefings():
 
             if not isinstance(briefing, dict) or "schedule" not in briefing:
                 logger.error("[Scheduler] Briefing generation failed for user %s", user_id)
+                errors += 1
                 continue
 
             print(f"[Scheduler] Sending daily briefing to user {user_id} via Telegram (chat_id={chat_id})")
@@ -213,9 +219,13 @@ async def send_daily_briefings():
             await _mark_briefing_sent(user_id)
             logger.info("[Scheduler] Briefing sent to user %s (chat_id=%s)", user_id, chat_id)
             print(f"[Scheduler] Daily briefing sent successfully to user {user_id}")
+            sent += 1
 
         except Exception:
             logger.exception("[Scheduler] Failed to send briefing for user %s", user_id)
+            errors += 1
+
+    return {"sent": sent, "skipped": skipped, "errors": errors}
 
 
 # ── Lifecycle ────────────────────────────────────────────────────────────────

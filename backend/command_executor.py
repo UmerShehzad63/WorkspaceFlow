@@ -265,6 +265,7 @@ def find_recipient_candidates(creds, name):
     collect(f'to:{name} in:sent', "To")
     collect(f'from:{name}', "From")
     collect(f'{name} in:inbox', "From")
+    collect(f'{name} in:sent', "To")   # broad: any sent email where name appears anywhere
 
     # Fallback: search word-by-word for partial name matches
     # e.g. "aslam khan" → also try to:aslam in:sent, to:khan in:sent
@@ -565,7 +566,8 @@ def drive_search(access_token, refresh_token, query, max_results=10):
 # ─── Calendar operations ────────────────────────────────────────────────────
 
 def calendar_search(access_token, refresh_token, query="", max_results=20,
-                    time_min=None, time_max=None):
+                    time_min=None, time_max=None,
+                    display_start=None, display_end=None):
     """Search/list calendar events. When time_min/time_max are provided, returns all
     events in that date range (ignoring text query). When only query is given, does a
     keyword search from now forward."""
@@ -604,7 +606,15 @@ def calendar_search(access_token, refresh_token, query="", max_results=20,
         })
 
     # Build conversational summary with date range if available
-    if time_min and time_max:
+    # Prefer display_start/display_end (local timezone dates from AI) over UTC time_min/time_max
+    if display_start and display_end:
+        try:
+            start_dt = datetime.datetime.fromisoformat(display_start[:19])
+            end_dt   = datetime.datetime.fromisoformat(display_end[:19])
+            period   = f"({start_dt.day} {start_dt.strftime('%b')} – {end_dt.day} {end_dt.strftime('%b')})"
+        except Exception:
+            period = "in the selected period"
+    elif time_min and time_max:
         try:
             start_dt = datetime.datetime.fromisoformat(time_min.rstrip("Z").split("+")[0])
             end_dt   = datetime.datetime.fromisoformat(time_max.rstrip("Z").split("+")[0])
@@ -925,14 +935,18 @@ def execute_command(intent, access_token, refresh_token, overrides=None, user_ti
                 time_min = _local_to_rfc3339(params.get("date_range_start"), user_timezone)
                 time_max = _local_to_rfc3339(params.get("date_range_end"), user_timezone)
                 return calendar_search(access_token, refresh_token,
-                                       query=query or "", time_min=time_min, time_max=time_max)
+                                       query=query or "", time_min=time_min, time_max=time_max,
+                                       display_start=params.get("date_range_start"),
+                                       display_end=params.get("date_range_end"))
 
             else:
                 query    = params.get("query") or params.get("title") or ""
                 time_min = _local_to_rfc3339(params.get("date_range_start"), user_timezone)
                 time_max = _local_to_rfc3339(params.get("date_range_end"), user_timezone)
                 return calendar_search(access_token, refresh_token,
-                                       query=query, time_min=time_min, time_max=time_max)
+                                       query=query, time_min=time_min, time_max=time_max,
+                                       display_start=params.get("date_range_start"),
+                                       display_end=params.get("date_range_end"))
 
         # ── Drive ─────────────────────────────────────────────────────────
         elif service == "drive":

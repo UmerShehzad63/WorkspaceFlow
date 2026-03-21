@@ -108,11 +108,14 @@ export default function CommandsPage() {
 
   const handlePreviewSend = async ({ to, subject, body }) => {
     if (!emailPreview) return;
+    const intentParams = emailPreview.intent?.parameters || {};
     const overrides = {
       ...(emailPreview.overrides || {}),
       recipient_email: to,
       subject,
       body,
+      // Carry resolved Drive file_id so execution skips a second Drive search
+      ...(intentParams._drive_file_id ? { file_id: intentParams._drive_file_id } : {}),
     };
     setEmailPreview(null);
     await runCommand(emailPreview.commandText, overrides, true);

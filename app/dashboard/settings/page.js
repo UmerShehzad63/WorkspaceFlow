@@ -248,6 +248,28 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Daily Briefing Cron Setup */}
+      <div className={styles.settingsSection}>
+        <h3 className={styles.settingsLabel}>⚙️ Daily Briefing Automation</h3>
+        <div className={styles.planCard}>
+          <div className={styles.planInfo}>
+            <span className={styles.planIcon}>🕐</span>
+            <div>
+              <strong>Set Up Automatic Daily Briefings</strong>
+              <p>To receive briefings automatically, create a free cron job at <a href="https://cron-job.org" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-blue)' }}>cron-job.org</a>:</p>
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: '12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px', fontFamily: 'monospace', fontSize: '0.82rem' }}>
+          <div style={{ marginBottom: '8px' }}><strong>URL:</strong> <code style={{ color: 'var(--accent-blue)' }}>https://workspaceflow-backend.onrender.com/api/briefing/send-daily</code></div>
+          <div style={{ marginBottom: '8px' }}><strong>Method:</strong> POST</div>
+          <div><strong>Schedule:</strong> Every day at 8:00 AM (or your preferred time above)</div>
+        </div>
+        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+          For security, set <code>CRON_SECRET</code> in your backend env and add <code>Authorization: Bearer &lt;secret&gt;</code> to the cron job headers.
+        </p>
+      </div>
+
       {/* Support */}
       <div className={styles.settingsSection}>
         <h3 className={styles.settingsLabel}>💬 Support</h3>

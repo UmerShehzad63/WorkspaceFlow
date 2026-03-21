@@ -248,6 +248,7 @@ async def run_command(request: Request):
     access_token  = profile.get("google_access_token")
     refresh_token = profile.get("google_refresh_token")
     user_timezone = profile.get("timezone") or "UTC"
+    eff_timezone  = req_timezone or user_timezone or "UTC"
 
     if not access_token:
         raise HTTPException(status_code=400, detail="Google account not connected. Please reconnect.")
@@ -286,6 +287,66 @@ async def run_command(request: Request):
                 "needs_disambiguation": True,
             }
 
+        # ── Step 1.5: Resolve Drive file if attachment mentioned ───────────
+        drive_filename = (
+            params.get("drive_file") or params.get("attachment") or
+            params.get("file") or params.get("filename") or ""
+        ).strip()
+        file_id_override = (overrides.get("file_id") or "").strip()
+        if drive_filename and not file_id_override:
+            from command_executor import find_file_candidates, _build_creds, _GDRIVE_TYPE_LABELS
+            loop2 = asyncio.get_event_loop()
+            try:
+                creds2 = await loop2.run_in_executor(
+                    None, functools.partial(_build_creds, access_token, refresh_token)
+                )
+                file_cands = await loop2.run_in_executor(
+                    None, functools.partial(find_file_candidates, creds2, drive_filename)
+                )
+            except Exception:
+                file_cands = []
+            if not file_cands:
+                return {
+                    "intent": intent,
+                    "result": {
+                        "type": "needs_disambiguation",
+                        "kind": "file",
+                        "query": drive_filename,
+                        "candidates": [],
+                        "current_overrides": {**overrides, "recipient_email": to},
+                    },
+                    "preview_only": False,
+                    "needs_disambiguation": True,
+                }
+            if len(file_cands) > 1:
+                return {
+                    "intent": intent,
+                    "result": {
+                        "type": "needs_disambiguation",
+                        "kind": "file",
+                        "query": drive_filename,
+                        "candidates": [
+                            {
+                                "id": f["id"],
+                                "name": f["name"],
+                                "type": _GDRIVE_TYPE_LABELS.get(f.get("mimeType", ""), f.get("mimeType", "").split("/")[-1]),
+                                "modified": f.get("modifiedTime", ""),
+                            }
+                            for f in file_cands
+                        ],
+                        "current_overrides": {**overrides, "recipient_email": to},
+                    },
+                    "preview_only": False,
+                    "needs_disambiguation": True,
+                }
+            # Single file found — cache for display in preview and for execution
+            params["_drive_file_id"]   = file_cands[0]["id"]
+            params["_drive_file_name"] = file_cands[0]["name"]
+        elif file_id_override:
+            # User picked file from disambiguation — cache file_id; name comes from overrides
+            params["_drive_file_id"]   = file_id_override
+            params["_drive_file_name"] = overrides.get("filename", drive_filename or "attachment")
+
         # ── Step 2: Generate email content ────────────────────────────────
         subject = (params.get("subject") or "").strip()
         body    = (params.get("body") or params.get("message") or params.get("content") or "").strip()
@@ -311,7 +372,7 @@ async def run_command(request: Request):
             intent.get("action", "").lower() in ("schedule", "create", "add", "book"):
         params = intent.setdefault("parameters", {})
         # Inject user's timezone so calendar_create uses the correct local time
-        params["_timezone"] = user_timezone
+        params["_timezone"] = eff_timezone
 
         # Collect attendees from all possible keys the AI might use
         raw_attendees = list(params.get("attendees") or [])
@@ -365,7 +426,6 @@ async def run_command(request: Request):
 
     try:
         loop   = asyncio.get_event_loop()
-        eff_timezone = req_timezone or user_timezone or "UTC"
         result = await loop.run_in_executor(
             None, functools.partial(execute_command, intent, access_token, refresh_token, overrides, eff_timezone)
         )
@@ -653,6 +713,29 @@ async def send_all_briefings(request: Request):
     print("[Cron] /api/briefing/send-all triggered")
     await send_daily_briefings()
     return {"success": True, "message": "Briefings job executed"}
+
+
+# ── External Cron: send-daily alias (returns counts) ─────────────────────────
+@app.post("/api/briefing/send-daily")
+@limiter.limit("10/minute")
+async def send_daily_briefings_endpoint(request: Request):
+    """
+    External cron endpoint — triggers daily briefings for all due users.
+    Returns: {"sent": N, "skipped": M, "errors": P}
+    Secure with CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
+    Setup: cron-job.org → POST https://workspaceflow-backend.onrender.com/api/briefing/send-daily
+    Schedule: Every day at 8:00 AM (or your preferred time)
+    """
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {cron_secret}":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    from jobs.scheduler import send_daily_briefings
+    print("[Cron] /api/briefing/send-daily triggered")
+    counts = await send_daily_briefings()
+    return counts if isinstance(counts, dict) else {"sent": 0, "skipped": 0, "errors": 0}
 
 
 if __name__ == "__main__":

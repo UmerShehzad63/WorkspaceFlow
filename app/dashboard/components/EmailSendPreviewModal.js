@@ -91,6 +91,14 @@ export default function EmailSendPreviewModal({ intent, onSend, onCancel }) {
                   {body || <em style={{ color: 'var(--text-muted)' }}>No body</em>}
                 </p>
               </div>
+
+              {/* Attachment */}
+              {params._drive_file_name && (
+                <div className={styles.previewSection}>
+                  <h4>Attachment</h4>
+                  <p>📎 {params._drive_file_name}</p>
+                </div>
+              )}
             </div>
           )}
         </div>

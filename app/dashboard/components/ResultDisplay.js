@@ -268,7 +268,7 @@ function FileDisambiguation({ result, onPick }) {
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {result.candidates.map((f, i) => (
-          <button key={i} onClick={() => onPick({ file_id: f.id })}
+          <button key={i} onClick={() => onPick({ file_id: f.id, filename: f.name })}
             style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '10px 14px', background: 'var(--bg-secondary)',
