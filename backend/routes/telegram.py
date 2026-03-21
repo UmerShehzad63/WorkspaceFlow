@@ -370,6 +370,11 @@ _AI_RESULT_KB = InlineKeyboardMarkup([[
     InlineKeyboardButton("🔄 Try Again", callback_data="ai_edit:retry"),
 ]])
 
+_DRIVE_ERROR_KB = InlineKeyboardMarkup([[
+    InlineKeyboardButton("📧 Send Without Attachment", callback_data="drive:skip"),
+    InlineKeyboardButton("❌ Cancel",                  callback_data="email:cancel"),
+]])
+
 _TASK_LABELS = {
     "send_email":      "Send Email",
     "search_email":    "Search Emails",
@@ -415,6 +420,7 @@ def _sniff_service(text: str) -> str | None:
 _RE_DOWNLOAD_VERB = re.compile(r'\b(download|fetch|grab|retrieve)\b', re.I)
 _RE_DRIVE_KW      = re.compile(r'\b(drive|google\s+drive|my\s+drive)\b', re.I)
 _RE_SEND_VERB     = re.compile(r'\b(send|compose|email\s+to|write\s+an?\s+email|mail\s+to)\b', re.I)
+_RE_EMAIL_VERB    = re.compile(r'\b(send\s+(an?\s+)?email|email\s+to|write\s+(an?\s+)?email|compose\s+(an?\s+)?email|send\s+a\s+mail|mail\s+to)\b', re.I)
 
 
 def _apply_intent_overrides(text: str, intent: dict) -> dict:
@@ -432,6 +438,14 @@ def _apply_intent_overrides(text: str, intent: dict) -> dict:
     elif _RE_DRIVE_KW.search(t) and not _RE_SEND_VERB.search(t):
         # Explicit "drive/google drive" without a send verb → Drive
         intent["service"] = "drive"
+
+    # "Send an email / email to / write an email" → always Gmail/Send
+    service_cur = (intent.get("service") or "").lower()
+    action_cur  = (intent.get("action")  or "").lower()
+    if _RE_EMAIL_VERB.search(t) and service_cur not in SUPPORTED_SERVICES:
+        intent["service"] = "gmail"
+        if action_cur not in ("send", "reply"):
+            intent["action"] = "send"
     return intent
 
 
@@ -445,7 +459,24 @@ def _intent_human_description(intent: dict) -> str:
         if action in ("archive", "delete", "label"):  return f"Archive Emails via {svc_label}"
         return f"Search Emails via {svc_label}"
     if service == "calendar":
-        if action in ("create", "schedule", "add", "book"): return "Create Calendar Event"
+        if action in ("create", "schedule", "add", "book"):
+            params  = intent.get("parameters") or {}
+            summary = params.get("summary") or "Event"
+            start   = (params.get("start_time") or params.get("start") or "").strip()
+            if start:
+                try:
+                    from datetime import datetime as _dt
+                    _d = _dt.fromisoformat(start.split("+")[0].rstrip("Z"))
+                    time_str = _d.strftime("%A, %B %-d at %-I:%M %p")
+                except Exception:
+                    try:
+                        from datetime import datetime as _dt
+                        _d = _dt.fromisoformat(start.split("+")[0].rstrip("Z"))
+                        time_str = f"{_d.strftime('%A, %B')} {_d.day} at {_d.hour:02d}:{_d.minute:02d}"
+                    except Exception:
+                        time_str = start[:16].replace("T", " ")
+                return f"Create Event: <b>{summary}</b> on {time_str}"
+            return f"Create Event: <b>{summary}</b>"
         return "Search Calendar"
     if service == "drive":
         return "Search Google Drive"
@@ -639,7 +670,48 @@ async def _advance_email_send(chat_id: str, intent: dict, user_id: str,
             _conv[chat_id]["confirm_message_id"] = msg.get("message_id")
         return
 
-    # Step 2+3 — email already has @, go straight to generation + preview
+    # Step 2 — pre-resolve Drive file attachment so it shows in preview
+    drive_file = (params.get("drive_file") or "").strip()
+    if drive_file and not params.get("_drive_file_resolved"):
+        await _update_status("📁 Looking for file in Drive…")
+        profile_d       = await _get_profile(user_id)
+        at_access       = (profile_d or {}).get("google_access_token") or access_token
+        at_refresh      = (profile_d or {}).get("google_refresh_token") or refresh_token
+        if at_access:
+            from command_executor import find_file_candidates, _build_creds
+            try:
+                loop_d       = asyncio.get_event_loop()
+                creds_d      = await loop_d.run_in_executor(
+                    None, functools.partial(_build_creds, at_access, at_refresh)
+                )
+                file_cands   = await loop_d.run_in_executor(
+                    None, functools.partial(find_file_candidates, creds_d, drive_file)
+                )
+            except Exception:
+                logger.exception("[Telegram] Drive pre-resolution failed for chat_id=%s", chat_id)
+                file_cands = []
+
+            if not file_cands:
+                _sessions.pop(chat_id, None)
+                _conv.pop(chat_id, None)
+                await send_message(
+                    chat_id,
+                    f"❌ <b>File not found in Drive: {drive_file}</b>\n\n"
+                    "Please check the file name and try again.",
+                    reply_markup=_DRIVE_ERROR_KB,
+                )
+                _conv[chat_id] = {"state": "wait_confirm", "intent": intent, "user_id": user_id}
+                return
+            elif len(file_cands) == 1:
+                # Cache resolved metadata so execute_command uses it directly
+                params["_drive_file_id"]       = file_cands[0]["id"]
+                params["_drive_file_name"]     = file_cands[0]["name"]
+                params["_drive_file_resolved"] = True
+            else:
+                # Multiple — let execute_command return needs_disambiguation/file
+                pass
+
+    # Step 3 — generate email + show preview
     await _generate_and_preview(chat_id, intent, user_id, original_command,
                                  status_message_id=status_message_id)  # spinner only
 
@@ -651,6 +723,7 @@ async def _show_email_preview(chat_id: str, intent: dict, user_id: str):
     subject = params.get("subject") or "(No Subject)"
     body    = _get_body(params)
 
+    drive_file = params.get("_drive_file_name") or params.get("drive_file") or ""
     body_preview = body[:500] + ("…" if len(body) > 500 else "")
     preview = (
         f"✅ <b>Ready to send!</b>\n\n"
@@ -658,6 +731,8 @@ async def _show_email_preview(chat_id: str, intent: dict, user_id: str):
         f"<b>Subject:</b> {subject}\n"
         f"<b>Body:</b>\n{body_preview}"
     )
+    if drive_file:
+        preview += f"\n\n📎 <b>Attachment:</b> {drive_file}"
     msg = await send_message(chat_id, preview, reply_markup=_CONFIRM_KB)
     _conv[chat_id] = {
         "state":             "wait_confirm",
@@ -668,7 +743,8 @@ async def _show_email_preview(chat_id: str, intent: dict, user_id: str):
 
 
 async def _execute_email_send(chat_id: str, intent: dict,
-                               access_token: str, refresh_token: str | None):
+                               access_token: str, refresh_token: str | None,
+                               user_id: str = ""):
     """Call execute_command for a Gmail send; always sends new result messages (Part 2)."""
     from command_executor import execute_command
 
@@ -682,7 +758,18 @@ async def _execute_email_send(chat_id: str, intent: dict,
 
         if isinstance(result, dict):
             if result.get("type") == "error":
-                await send_message(chat_id, f"❌ Email failed: {result.get('error', 'unknown error')}")
+                err_msg = result.get("error", "unknown error")
+                # Drive file not found — offer to send without attachment
+                if "drive" in err_msg.lower() or "file" in err_msg.lower() or "found" in err_msg.lower():
+                    await send_message(
+                        chat_id,
+                        f"❌ <b>Attachment issue:</b> {err_msg}\n\n"
+                        "You can send the email without the attachment, or cancel.",
+                        reply_markup=_DRIVE_ERROR_KB,
+                    )
+                    _conv[chat_id] = {"state": "wait_confirm", "intent": intent, "user_id": user_id}
+                else:
+                    await send_message(chat_id, f"❌ Email failed: {err_msg}")
                 return
             if result.get("type") == "needs_disambiguation":
                 kind       = result.get("kind", "item")
@@ -696,8 +783,28 @@ async def _execute_email_send(chat_id: str, intent: dict,
                     _conv[chat_id] = {
                         "state":      "wait_recipient_pick",
                         "intent":     intent,
+                        "user_id":    user_id,
                         "candidates": norm,
                         "original_command": "",
+                        "confirm_message_id": (msg or {}).get("message_id"),
+                    }
+                elif kind == "file" and candidates:
+                    # Drive file disambiguation — show picker buttons
+                    kb_rows = []
+                    for i, f in enumerate(candidates[:5]):
+                        label = f"📄 {f.get('name', 'File')} ({f.get('type', '')})"
+                        kb_rows.append([InlineKeyboardButton(label, callback_data=f"drive_file:{i}")])
+                    kb_rows.append([InlineKeyboardButton("❌ Cancel", callback_data="email:cancel")])
+                    msg = await send_message(
+                        chat_id,
+                        "📁 <b>Multiple files found. Which one do you want to attach?</b>",
+                        reply_markup=InlineKeyboardMarkup(kb_rows),
+                    )
+                    _conv[chat_id] = {
+                        "state":           "wait_drive_pick",
+                        "intent":          intent,
+                        "user_id":         user_id,
+                        "drive_candidates": candidates[:5],
                         "confirm_message_id": (msg or {}).get("message_id"),
                     }
                 else:
@@ -739,12 +846,32 @@ async def _route_intent(chat_id: str, intent: dict, user_id: str,
                                   status_message_id=(status_msg or {}).get("message_id"))
         return
 
+    # For calendar creates, get precise timezone from Google Calendar API if profile only has UTC
+    if service == "calendar" and action in ("create", "schedule", "add", "book"):
+        if user_timezone in ("UTC", ""):
+            try:
+                from command_executor import _build_creds, _calendar_service
+                loop_tz   = asyncio.get_event_loop()
+                creds_tz  = await loop_tz.run_in_executor(
+                    None, functools.partial(_build_creds, access_token, refresh_token)
+                )
+                svc_tz    = _calendar_service(creds_tz)
+                setting   = await loop_tz.run_in_executor(
+                    None, lambda: svc_tz.settings().get(setting="timezone").execute()
+                )
+                tz_val = setting.get("value", "")
+                if tz_val:
+                    user_timezone = tz_val
+                    intent.setdefault("parameters", {})["_timezone"] = user_timezone
+            except Exception:
+                pass  # keep whatever timezone we have
+
     status_msg = await send_message(chat_id, "⏳ Processing…")
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
-            functools.partial(execute_command, intent, access_token, refresh_token),
+            functools.partial(execute_command, intent, access_token, refresh_token, None, user_timezone),
         )
         logger.info("[Telegram] NL result for chat_id=%s type=%s",
                     chat_id, result.get("type") if isinstance(result, dict) else type(result))
@@ -826,25 +953,32 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
 
     # Validate service — catch "other" or unrecognized
     if service not in SUPPORTED_SERVICES:
-        _conv[chat_id] = {
-            "state":            "wait_service_pick",
-            "intent":           intent,
-            "user_id":          user_id,
-            "original_command": text,
-            "access_token":     access_token,
-            "refresh_token":    refresh_token,
-        }
-        pick_text = (
-            "🤔 I didn't catch which service you mean.\n"
-            "Please choose one:"
-        )
-        if status_message_id:
-            await edit_message_text(chat_id, status_message_id, pick_text, reply_markup=_SERVICE_KB)
+        # Try rule-based detection before asking user to pick
+        sniffed = _sniff_service(text)
+        if sniffed:
+            intent["service"] = sniffed
+            service = sniffed
+            # Fall through to intent confirmation below
         else:
-            msg = await send_message(chat_id, pick_text, reply_markup=_SERVICE_KB)
-            if msg:
-                _conv[chat_id]["status_message_id"] = msg.get("message_id")
-        return
+            _conv[chat_id] = {
+                "state":            "wait_service_pick",
+                "intent":           intent,
+                "user_id":          user_id,
+                "original_command": text,
+                "access_token":     access_token,
+                "refresh_token":    refresh_token,
+            }
+            pick_text = (
+                "🤔 I didn't catch which service you mean.\n"
+                "Please choose one:"
+            )
+            if status_message_id:
+                await edit_message_text(chat_id, status_message_id, pick_text, reply_markup=_SERVICE_KB)
+            else:
+                msg = await send_message(chat_id, pick_text, reply_markup=_SERVICE_KB)
+                if msg:
+                    _conv[chat_id]["status_message_id"] = msg.get("message_id")
+            return
 
     # Show intent confirmation — user confirms before we execute anything
     desc = _intent_human_description(intent)
@@ -968,7 +1102,7 @@ async def telegram_webhook(request: Request):
         if cq_data == "email:send":
             _conv.pop(chat_id, None)
             await _clear_kb(chat_id, message_id)
-            await _execute_email_send(chat_id, intent, access_token, refresh_token)
+            await _execute_email_send(chat_id, intent, access_token, refresh_token, user_id)
 
         elif cq_data == "email:edit":
             _conv[chat_id] = {**conv, "state": "wait_edit_field"}
@@ -982,6 +1116,35 @@ async def telegram_webhook(request: Request):
             _sessions.pop(chat_id, None)
             await _clear_kb(chat_id, message_id)
             await send_message(chat_id, "❌ Cancelled.")
+
+        # ── drive:skip — send without Drive attachment ─────────────────────────
+        elif cq_data == "drive:skip":
+            # Remove drive_file from params so execute_command won't try to attach
+            intent_skip = conv.get("intent", intent)
+            (intent_skip.get("parameters") or {}).pop("drive_file", None)
+            (intent_skip.get("parameters") or {}).pop("_drive_file_id", None)
+            (intent_skip.get("parameters") or {}).pop("_drive_file_name", None)
+            (intent_skip.get("parameters") or {}).pop("_drive_file_resolved", None)
+            _conv.pop(chat_id, None)
+            await _clear_kb(chat_id, message_id)
+            await _execute_email_send(chat_id, intent_skip, access_token, refresh_token, user_id)
+
+        # ── drive_file:N — user picks Drive file from disambiguation ──────────
+        elif cq_data.startswith("drive_file:"):
+            suffix = cq_data.split(":", 1)[1]
+            if suffix.isdigit():
+                drive_cands = conv.get("drive_candidates", [])
+                idx = int(suffix)
+                if 0 <= idx < len(drive_cands):
+                    chosen_file = drive_cands[idx]
+                    intent_df   = conv.get("intent", intent)
+                    p_df        = intent_df.setdefault("parameters", {})
+                    p_df["_drive_file_id"]       = chosen_file["id"]
+                    p_df["_drive_file_name"]      = chosen_file["name"]
+                    p_df["_drive_file_resolved"]  = True
+                    _conv.pop(chat_id, None)
+                    await _clear_kb(chat_id, message_id)
+                    await _execute_email_send(chat_id, intent_df, access_token, refresh_token, user_id)
 
         elif cq_data == "email:edit_subject":
             _conv[chat_id] = {**conv, "state": "wait_edit_method", "edit_field": "subject"}
@@ -1066,7 +1229,7 @@ async def telegram_webhook(request: Request):
                     loop   = asyncio.get_event_loop()
                     result = await loop.run_in_executor(
                         None,
-                        functools.partial(execute_command, intent, stored_access, stored_refresh),
+                        functools.partial(execute_command, intent, stored_access, stored_refresh, None, user_timezone),
                     )
                     _sessions.pop(chat_id, None)
                     await _send_long(chat_id, _format_nl_result(result))
@@ -1376,7 +1539,7 @@ async def telegram_webhook(request: Request):
                 await send_message(chat_id, "👋 Okay, cancelled!")
             elif _is_confirm_text(answer) or upper in ("SEND", "CONFIRM"):
                 _conv.pop(chat_id, None)
-                await _execute_email_send(chat_id, intent, access_token, refresh_token)
+                await _execute_email_send(chat_id, intent, access_token, refresh_token, user_id)
             elif "edit" in answer.lower() or upper == "EDIT":
                 _conv[chat_id] = {**_conv[chat_id], "state": "wait_edit_field"}
                 await send_message(chat_id, "✏️ <b>What would you like to change?</b>",
@@ -1484,6 +1647,35 @@ async def telegram_webhook(request: Request):
             await send_message(chat_id,
                                f"🤖 <b>AI suggestion for {edit_field}:</b>\n\n{ai_preview}",
                                reply_markup=_AI_RESULT_KB)
+            return JSONResponse({"ok": True})
+
+        # ── wait_drive_pick ───────────────────────────────────────────────────
+        if state == "wait_drive_pick":
+            drive_cands = _conv[chat_id].get("drive_candidates", [])
+            if _is_cancel_text(answer):
+                _conv.pop(chat_id, None)
+                _sessions.pop(chat_id, None)
+                await send_message(chat_id, "👋 Okay, cancelled!")
+            elif answer.isdigit() and 1 <= int(answer) <= len(drive_cands):
+                chosen = drive_cands[int(answer) - 1]
+                params["_drive_file_id"]      = chosen["id"]
+                params["_drive_file_name"]    = chosen["name"]
+                params["_drive_file_resolved"] = True
+                _conv.pop(chat_id, None)
+                profile_dw = await _get_profile(user_id)
+                at_dw   = (profile_dw or {}).get("google_access_token") or access_token
+                ar_dw   = (profile_dw or {}).get("google_refresh_token") or refresh_token
+                await _execute_email_send(chat_id, intent, at_dw, ar_dw, user_id)
+            else:
+                kb_rows = []
+                for i, f in enumerate(drive_cands):
+                    kb_rows.append([InlineKeyboardButton(
+                        f"📄 {f.get('name', 'File')}", callback_data=f"drive_file:{i}"
+                    )])
+                kb_rows.append([InlineKeyboardButton("❌ Cancel", callback_data="email:cancel")])
+                await send_message(chat_id,
+                                   "Please pick a number or tap a button to choose the file:",
+                                   reply_markup=InlineKeyboardMarkup(kb_rows))
             return JSONResponse({"ok": True})
 
         # ── wait_ai_approve ───────────────────────────────────────────────────
