@@ -49,6 +49,12 @@ router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 # _sessions: task/service lock — persists for the life of a task
 _conv: dict     = {}
 _sessions: dict = {}  # chat_id → {"task": str, "service": str}
+_plan_warning_sent: dict = {}  # chat_id → datetime: rate-limits "upgrade required" to 1/hr
+
+
+def _is_pro_plan(plan: str) -> bool:
+    """Return True if the plan grants Telegram / Pro feature access."""
+    return (plan or "").lower() in {"pro", "pro_plus", "trialing", "pro_trial", "active"}
 
 
 # ── Supabase helpers ────────────────────────────────────────────────────────
@@ -1231,6 +1237,10 @@ async def telegram_webhook(request: Request):
         refresh_token = (profile or {}).get("google_refresh_token")
         user_timezone = (profile or {}).get("timezone") or "UTC"
 
+        # Silently drop callbacks from free/expired users (no spam)
+        if not _is_pro_plan((profile or {}).get("plan") or "free"):
+            return JSONResponse({"ok": True})
+
         conv = _conv.get(chat_id, {})
         intent  = conv.get("intent", {})
         params  = intent.setdefault("parameters", {}) if intent else {}
@@ -1596,6 +1606,33 @@ async def telegram_webhook(request: Request):
         await send_message(chat_id, "❌ Cancelled.")
         return JSONResponse({"ok": True})
 
+    # ── Plan gate — block free/expired users from all Telegram features ───────
+    user_plan = (profile or {}).get("plan") or "free"
+    if not _is_pro_plan(user_plan):
+        # /status is the one exception: always allowed on any plan
+        if command == "status":
+            await send_message(
+                chat_id,
+                "📊 <b>Your account</b>\n\n"
+                "Plan: Free\n"
+                "Telegram: Requires Pro plan\n\n"
+                "👉 Upgrade: https://workspace-flow.vercel.app",
+            )
+            return JSONResponse({"ok": True})
+        # All other messages/commands: warn once per hour, then stay silent
+        now = datetime.now(tz.utc)
+        last_warned = _plan_warning_sent.get(chat_id)
+        if last_warned is None or (now - last_warned).total_seconds() > 3600:
+            _plan_warning_sent[chat_id] = now
+            await send_message(
+                chat_id,
+                "⚠️ Your Pro trial has ended.\n\n"
+                "To continue using WorkspaceFlow on Telegram, upgrade to Pro:\n"
+                "👉 https://workspace-flow.vercel.app/dashboard/settings\n\n"
+                "Your account is still active — upgrade anytime to resume.",
+            )
+        return JSONResponse({"ok": True})
+
     # ── Conversation state machine (non-slash replies) ────────────────────────
     # Every step handles free text first — buttons are shortcuts, not walls.
     if not is_command and chat_id in _conv:
@@ -1915,12 +1952,12 @@ async def telegram_webhook(request: Request):
         )
 
     elif command == "status":
-        google_ok = bool(access_token)
-        plan      = (profile or {}).get("plan", "free").title()
+        google_ok  = bool(access_token)
+        plan_label = user_plan.replace("_", " ").title()
         await send_message(
             chat_id,
             "<b>⚙️ Account Status</b>\n\n"
-            f"Plan: {plan}\n"
+            f"Plan: {plan_label}\n"
             f"Google: {'✅ connected' if google_ok else '❌ not connected'}\n"
             "Telegram: ✅ connected",
         )
