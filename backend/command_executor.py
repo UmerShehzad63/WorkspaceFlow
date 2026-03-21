@@ -513,39 +513,66 @@ def drive_search(access_token, refresh_token, query, max_results=10):
 
 # ─── Calendar operations ────────────────────────────────────────────────────
 
-def calendar_search(access_token, refresh_token, query, max_results=10):
+def calendar_search(access_token, refresh_token, query="", max_results=20,
+                    time_min=None, time_max=None):
+    """Search/list calendar events. When time_min/time_max are provided, returns all
+    events in that date range (ignoring text query). When only query is given, does a
+    keyword search from now forward."""
     creds = _build_creds(access_token, refresh_token)
-    svc = _calendar_service(creds)
+    svc   = _calendar_service(creds)
 
-    now = datetime.datetime.utcnow().isoformat() + "Z"
-    result = svc.events().list(
-        calendarId="primary",
-        q=query,
-        timeMin=now,
-        maxResults=max_results,
-        singleEvents=True,
-        orderBy="startTime",
-    ).execute()
+    if time_min is None:
+        time_min = datetime.datetime.utcnow().isoformat() + "Z"
+
+    kwargs = {
+        "calendarId":  "primary",
+        "timeMin":     time_min,
+        "maxResults":  max_results,
+        "singleEvents": True,
+        "orderBy":     "startTime",
+    }
+    if time_max:
+        kwargs["timeMax"] = time_max
+    if query:
+        kwargs["q"] = query
+
+    result = svc.events().list(**kwargs).execute()
 
     events = []
     for e in result.get("items", []):
         start = e.get("start", {})
-        end = e.get("end", {})
+        end   = e.get("end", {})
         events.append({
-            "id": e.get("id"),
-            "title": e.get("summary", "(No title)"),
-            "start": start.get("dateTime") or start.get("date", ""),
-            "end": end.get("dateTime") or end.get("date", ""),
-            "location": e.get("location", ""),
+            "id":        e.get("id"),
+            "title":     e.get("summary", "(No title)"),
+            "start":     start.get("dateTime") or start.get("date", ""),
+            "end":       end.get("dateTime")   or end.get("date", ""),
+            "location":  e.get("location", ""),
             "attendees": [a.get("email", "") for a in e.get("attendees", [])],
-            "link": e.get("htmlLink", ""),
+            "link":      e.get("htmlLink", ""),
         })
 
+    # Build conversational summary
+    if time_max:
+        period = "in the selected period"
+    elif query:
+        period = f'for "{query}"'
+    else:
+        period = "coming up"
+
+    if len(events) == 0:
+        summary = f"No events found {period}".strip()
+    elif len(events) == 1:
+        summary = f"You have 1 event {period}".strip()
+    else:
+        summary = f"You have {len(events)} events {period}".strip()
+
     return {
-        "type": "calendar_search",
-        "events": events,
-        "count": len(events),
-        "query": query,
+        "type":    "calendar_search",
+        "events":  events,
+        "count":   len(events),
+        "query":   query or "",
+        "summary": summary,
     }
 
 
@@ -625,6 +652,18 @@ def _resolve_datetime(dt_str, offset_hours=0):
         return (base + datetime.timedelta(hours=offset_hours)).isoformat()
 
 
+def _to_rfc3339(iso_str) -> str | None:
+    """Convert an ISO datetime string (possibly without TZ) to RFC 3339 with Z suffix for Google Calendar API."""
+    if not iso_str:
+        return None
+    s = str(iso_str).strip()
+    if len(s) == 10:          # date only "2026-03-23" → add midnight
+        return s + "T00:00:00Z"
+    if not s.endswith("Z") and "+" not in s[-6:]:
+        return s + "Z"
+    return s
+
+
 # ─── Main router ──────────────────────────────────────────────────────────
 
 def execute_command(intent, access_token, refresh_token, overrides=None):
@@ -636,6 +675,16 @@ def execute_command(intent, access_token, refresh_token, overrides=None):
     service = (intent.get("service") or "").lower().strip()
     action  = (intent.get("action")  or "").lower().strip()
     params  = intent.get("parameters") or {}
+
+    # ── Unsupported ──────────────────────────────────────────────────────────
+    if service == "unsupported":
+        return {
+            "type":    "unsupported",
+            "message": intent.get("response_message") or (
+                "I'm not sure how to do that with Google Workspace. "
+                "Try searching your emails, calendar events, or Drive files."
+            ),
+        }
 
     try:
         # ── Gmail ──────────────────────────────────────────────────────────
@@ -805,17 +854,18 @@ def execute_command(intent, access_token, refresh_token, overrides=None):
                 )
 
             elif action in ("search", "find", "list"):
-                query = (
-                    params.get("query") or params.get("title") or
-                    params.get("summary") or params.get("event") or ""
-                )
-                return calendar_search(access_token, refresh_token, query)
+                query    = params.get("query") or params.get("title") or params.get("summary") or ""
+                time_min = _to_rfc3339(params.get("date_range_start"))
+                time_max = _to_rfc3339(params.get("date_range_end"))
+                return calendar_search(access_token, refresh_token,
+                                       query=query or "", time_min=time_min, time_max=time_max)
 
             else:
-                return calendar_search(
-                    access_token, refresh_token,
-                    params.get("query") or params.get("title") or "",
-                )
+                query    = params.get("query") or params.get("title") or ""
+                time_min = _to_rfc3339(params.get("date_range_start"))
+                time_max = _to_rfc3339(params.get("date_range_end"))
+                return calendar_search(access_token, refresh_token,
+                                       query=query, time_min=time_min, time_max=time_max)
 
         # ── Drive ─────────────────────────────────────────────────────────
         elif service == "drive":

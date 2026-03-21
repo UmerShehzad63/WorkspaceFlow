@@ -256,6 +256,9 @@ def _format_nl_result(result: dict) -> str:
     """Convert a command_executor result dict to readable Telegram HTML."""
     t = result.get("type", "")
 
+    if t == "unsupported":
+        return result.get("message", "I can't do that with Google Workspace.")
+
     if t == "gmail_search":
         return _format_email_list(result.get("messages", []))
 
@@ -267,17 +270,21 @@ def _format_nl_result(result: dict) -> str:
         return f"✅ Archived <b>{n}</b> email{'s' if n != 1 else ''}."
 
     if t == "calendar_search":
-        events = result.get("events", [])
+        events  = result.get("events", [])
+        summary = result.get("summary", "")
         if not events:
-            return "📅 No upcoming events found."
-        lines = [f"<b>📅 {len(events)} event{'s' if len(events) != 1 else ''}</b>"]
-        for e in events[:10]:
+            return f"📅 {summary or 'No events found.'}"
+        header = f"📅 <b>{summary}</b>" if summary else f"📅 <b>{len(events)} event{'s' if len(events) != 1 else ''}</b>"
+        lines  = [header]
+        for i, e in enumerate(events[:10]):
             start = (e.get("start") or "")[:16].replace("T", " ")
             title = e.get("title") or "Event"
+            entry = f"\n{i+1}. <b>{title}</b>"
+            if start:
+                entry += f"\n   📅 {start}"
             attendees = e.get("attendees") or []
-            entry = f"\n<b>{title}</b>\n{start}"
             if attendees:
-                entry += f"\nWith: {', '.join(attendees[:3])}"
+                entry += f"\n   👥 {', '.join(attendees[:3])}"
             lines.append(entry)
         return "\n".join(lines)
 
@@ -781,7 +788,7 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
     status_message_id = (status_msg or {}).get("message_id") if status_msg else None
 
     try:
-        intent = await parse_command_intent(text)
+        intent = await parse_command_intent(text, user_timezone=user_timezone)
     except Exception:
         logger.exception("[Telegram] Intent parsing failed for chat_id=%s", chat_id)
         if status_message_id:
@@ -803,6 +810,19 @@ async def _handle_nl_command(chat_id: str, text: str, user_id: str,
 
     service = (intent.get("service") or "").lower()
     action  = (intent.get("action")  or "").lower()
+
+    # Handle unsupported commands — show GPT's helpful response, skip service picker
+    if service == "unsupported":
+        _sessions.pop(chat_id, None)
+        msg = intent.get("response_message") or (
+            "I'm not sure how to help with that using Google Workspace. "
+            "Try searching your emails, calendar, or Drive files."
+        )
+        if status_message_id:
+            await edit_message_text(chat_id, status_message_id, msg)
+        else:
+            await send_message(chat_id, msg)
+        return
 
     # Validate service — catch "other" or unrecognized
     if service not in SUPPORTED_SERVICES:

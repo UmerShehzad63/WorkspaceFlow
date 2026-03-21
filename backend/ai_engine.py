@@ -166,40 +166,105 @@ ABSOLUTE RULES:
     return await _call_openai(messages)
 
 
-async def parse_command_intent(command: str):
-    prompt = f"""Parse this natural language workspace command into a structured action.
+async def parse_command_intent(command: str, user_timezone: str = "UTC"):
+    """
+    Classify a workspace command into a structured intent using GPT.
+    Two-step AI pipeline: classify intent + extract entities.
+    Returns {service, action, parameters, human_description, response_message}.
+    """
+    from datetime import datetime, timedelta
+
+    today      = datetime.utcnow()
+    today_iso  = today.strftime("%Y-%m-%d")
+    tomorrow   = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Compute this-week and next-week boundaries (Monday–Sunday)
+    days_since_monday  = today.weekday()                          # 0=Mon
+    days_until_monday  = (7 - days_since_monday) % 7 or 7        # days to NEXT Mon
+    this_monday  = (today - timedelta(days=days_since_monday)).strftime("%Y-%m-%d")
+    this_sunday  = (today - timedelta(days=days_since_monday) + timedelta(days=6)).strftime("%Y-%m-%d")
+    next_monday  = (today + timedelta(days=days_until_monday)).strftime("%Y-%m-%d")
+    next_sunday  = (today + timedelta(days=days_until_monday + 6)).strftime("%Y-%m-%d")
+
+    prompt = f"""You are an AI assistant for WorkspaceFlow, a Google Workspace automation tool.
+Parse the user command and return a structured JSON action plan.
+
+TODAY: {today_iso} ({today.strftime('%A')})
+USER_TIMEZONE: {user_timezone}
+DATE ANCHORS (use these exactly):
+  today      = {today_iso}
+  tomorrow   = {tomorrow}
+  this week  = {this_monday} to {this_sunday}
+  next week  = {next_monday} to {next_sunday}
 
 Command: "{command}"
 
 Return ONLY a valid JSON object with these exact keys:
 {{
-  "service": "Gmail" | "Calendar" | "Drive",
-  "action": "Send" | "Search" | "Fetch" | "Archive" | "Reply" | "Schedule" | "Create" | "Find" | "Other",
+  "service": "Gmail" | "Calendar" | "Drive" | "Unsupported",
+  "action":  "Send" | "Reply" | "Search" | "Archive" | "Create" | "List" | "None",
   "parameters": {{
-    // For Gmail Send:   "to" (name OR email), "subject" (optional), "body" (optional), "drive_file" (optional filename)
-    // For Gmail Search/Fetch: "from", "subject", "query", "label", "max_results"
-    // For Gmail Archive: "from", "subject", "query"
-    // For Calendar Create/Schedule: "summary", "start_time" (ISO 8601), "end_time" (ISO 8601), "attendees" (list), "description"
-    // For Calendar Search/Find: "query", "title"
-    // For Drive Search/Find: "query", "filename"
-    // Include only relevant params, omit the rest
+    // Gmail Send/Reply:       "to", "subject" (optional), "body" (optional), "drive_file" (optional filename)
+    // Gmail Search/Archive:   "from", "subject", "query", "label", "max_results"
+    // Calendar Create:        "summary", "start_time" (ISO, no Z), "end_time" (ISO, no Z), "attendees", "description"
+    // Calendar List (date):   "date_range_start" (YYYY-MM-DDTHH:MM:SS), "date_range_end" (YYYY-MM-DDTHH:MM:SS), "query": null
+    // Calendar Search (word): "query" (keyword only, no date_range keys)
+    // Drive Search:           "query", "filename"
+    // Unsupported:            {{}}
   }},
-  "human_description": "One sentence: exactly what this command will do"
+  "human_description": "One sentence: exactly what this command will do",
+  "response_message": "For Unsupported only: helpful message suggesting what CAN be done instead. null otherwise."
 }}
 
-Rules:
-- For Calendar events, always output start_time and end_time in ISO 8601 format (e.g. "2026-03-20T14:00:00Z"). Convert relative times like "tomorrow 2pm" to real ISO datetimes using today's date 2026-03-19.
-- For Gmail Send, the "to" field can be a person's full name (e.g. "Muhammad Aslam Khan") — do NOT try to guess their email address; the system will resolve it from Gmail history.
-- For Gmail Send, "body" and "subject" are optional — omit them if not specified in the command; the system will auto-generate them.
-- For Gmail Search, build the most specific query possible (from:, subject:, label:, etc.).
-- CRITICAL RULE — Drive file sends: If the command mentions sending/emailing a file, document, or anything that could be a filename (transcript, proposal, report, invoice, spreadsheet, etc.) use service=Gmail, action=Send, and set "drive_file" to the filename or document description. NEVER put file content in "body". NEVER invent a body for Drive file sends — leave "body" omitted.
-  Examples:
-  - "send transcript to john@example.com" → {{service: "Gmail", action: "Send", parameters: {{to: "john@example.com", drive_file: "transcript"}}}}
-  - "email the proposal to Muhammad Aslam Khan" → {{service: "Gmail", action: "Send", parameters: {{to: "Muhammad Aslam Khan", drive_file: "proposal"}}}}
-  - "send Q1 report from my drive to sarah@example.com" → {{service: "Gmail", action: "Send", parameters: {{to: "sarah@example.com", drive_file: "Q1 report"}}}}"""
+ROUTING RULES — follow in strict priority order:
+
+1. ACTION VERB beats everything else:
+   - download / get [file from drive] / grab / retrieve → Unsupported
+   - send / email / mail / write email to → Gmail / Send
+   - find emails / search inbox / what did X say / read emails → Gmail / Search
+   - schedule / book / create meeting / add event / set up a call → Calendar / Create
+   - remind me / add reminder → Calendar / Create (create an event as reminder)
+   - how many events/meetings / what's on my calendar / list my events / do I have anything → Calendar / List
+   - find keyword on calendar → Calendar / Search (keyword query, no date range)
+   - find file / search drive / look for document → Drive / Search
+   - archive / delete emails → Gmail / Archive
+
+2. CALENDAR LIST with date range — always resolve using DATE ANCHORS above:
+   - "next week" → date_range_start="{next_monday}T00:00:00", date_range_end="{next_sunday}T23:59:59"
+   - "this week" → date_range_start="{this_monday}T00:00:00", date_range_end="{this_sunday}T23:59:59"
+   - "today"     → date_range_start="{today_iso}T00:00:00",   date_range_end="{today_iso}T23:59:59"
+   - "tomorrow"  → date_range_start="{tomorrow}T00:00:00",    date_range_end="{tomorrow}T23:59:59"
+   - Other dates: compute ISO from TODAY={today_iso}
+   - When using date range, set "query" to null (do NOT filter by keyword like "meetings")
+
+3. GMAIL SEND rules:
+   - "to" = name or email exactly as given (system resolves names to emails)
+   - "drive_file" = filename when user says "send/email [file] to [person]"
+   - NEVER invent body or subject — omit if not specified in command
+   - NEVER put file content in body
+
+4. UNSUPPORTED friendly messages (use these exact formats):
+   - download/get file → "I can't download files directly, but I can search for it in Google Drive or email it to someone. What would you like to do?"
+   - phone call → "I can't make calls, but I can send an email or schedule a meeting instead."
+   - browse web → "I can't browse the web, but I can search your Gmail, Calendar, or Drive."
+   - other → explain what IS possible with Gmail / Calendar / Drive
+
+5. IMPORTANT EXAMPLES:
+   "how many meetings do I have next week" → Calendar/List, date_range_start="{next_monday}T00:00:00", date_range_end="{next_sunday}T23:59:59", query=null
+   "what's on my calendar today"           → Calendar/List, date_range_start="{today_iso}T00:00:00", date_range_end="{today_iso}T23:59:59"
+   "find emails from sarah about project"  → Gmail/Search, from="sarah", query="project"
+   "download my cv"                        → Unsupported, helpful response_message
+   "send my cv to john"                    → Gmail/Send, to="john", drive_file="cv"
+   "schedule standup tomorrow 9am"         → Calendar/Create, summary="Standup", start_time="{tomorrow}T09:00:00"
+   "remind me about the budget review at 3pm" → Calendar/Create, summary="Budget review reminder", start_time="{today_iso}T15:00:00"
+   "archive all newsletters"               → Gmail/Archive, query="newsletter"
+"""
 
     messages = [
-        {"role": "system", "content": "You are a workspace command parser. Return valid JSON only. Never include explanatory text outside the JSON object."},
+        {
+            "role": "system",
+            "content": "You are a workspace command parser. Return valid JSON only. Never include explanatory text outside the JSON object.",
+        },
         {"role": "user", "content": prompt},
     ]
 

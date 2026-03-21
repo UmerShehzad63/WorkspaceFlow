@@ -221,13 +221,14 @@ async def run_command(request: Request):
     command      = data.get("command", "").strip()
     overrides    = data.get("overrides") or {}
     preview_only = bool(data.get("preview_only", False))
+    req_timezone = (data.get("timezone") or "").strip() or "UTC"
 
     if not command:
         raise HTTPException(status_code=400, detail="Command cannot be empty")
     if len(command) > 500:
         raise HTTPException(status_code=400, detail="Command too long (max 500 characters)")
 
-    intent = await parse_command_intent(command)
+    intent = await parse_command_intent(command, user_timezone=req_timezone)
     if not isinstance(intent, dict) or "service" not in intent:
         raise HTTPException(status_code=503, detail="AI service unavailable. Try again shortly.")
 

@@ -47,7 +47,12 @@ export default function CommandsPage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ command: commandText, overrides, preview_only: !skipPreview }),
+        body: JSON.stringify({
+          command: commandText,
+          overrides,
+          preview_only: !skipPreview,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
       });
 
       if (!response.ok) {

@@ -97,23 +97,40 @@ function GmailArchiveResult({ result }) {
 }
 
 function CalendarSearchResult({ result }) {
-  const { events = [], count, query } = result;
+  const { events = [], count, query, summary } = result;
   return (
     <div>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginBottom: '12px' }}>
-        {count} upcoming event{count !== 1 ? 's' : ''}{query ? ` for "${query}"` : ''}
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '12px', fontWeight: 500 }}>
+        {summary || (count > 0
+          ? `${count} event${count !== 1 ? 's' : ''}${query ? ` for "${query}"` : ''}`
+          : `No events found${query ? ` for "${query}"` : ''}`)}
       </p>
-      {events.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No events found.</p>}
+      {events.length === 0 && (
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+          Your calendar is clear for this period.
+        </p>
+      )}
       {events.map((ev, i) => (
-        <div key={i} style={{ borderTop: i > 0 ? '1px solid var(--border-color)' : 'none', paddingTop: i > 0 ? '12px' : 0, marginBottom: '12px' }}>
-          <strong style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>{ev.title}</strong>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            {ev.start ? new Date(ev.start).toLocaleString() : 'Time TBD'}
-            {ev.end && ev.end !== ev.start ? ` – ${new Date(ev.end).toLocaleString()}` : ''}
+        <div key={i} style={{
+          borderTop: i > 0 ? '1px solid var(--border-color)' : 'none',
+          paddingTop: i > 0 ? '12px' : 0,
+          marginBottom: '12px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', minWidth: '20px', marginTop: '2px' }}>
+              {i + 1}.
+            </span>
+            <div style={{ flex: 1 }}>
+              <strong style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>{ev.title}</strong>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                📅 {ev.start ? new Date(ev.start).toLocaleString() : 'Time TBD'}
+                {ev.end && ev.end !== ev.start ? ` – ${new Date(ev.end).toLocaleTimeString()}` : ''}
+              </div>
+              {ev.location && <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>📍 {ev.location}</div>}
+              {ev.attendees?.length > 0 && <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>👥 {ev.attendees.slice(0, 3).join(', ')}</div>}
+              {ev.link && <a href={ev.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: 'var(--accent-blue)' }}>Open →</a>}
+            </div>
           </div>
-          {ev.location && <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>📍 {ev.location}</div>}
-          {ev.attendees?.length > 0 && <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>👥 {ev.attendees.join(', ')}</div>}
-          {ev.link && <a href={ev.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: 'var(--accent-blue)' }}>Open in Calendar →</a>}
         </div>
       ))}
     </div>
@@ -261,6 +278,16 @@ function FileDisambiguation({ result, onPick }) {
   );
 }
 
+function UnsupportedResult({ result }) {
+  return (
+    <div style={{ padding: '4px 0' }}>
+      <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.7, margin: 0 }}>
+        {result.message || "I'm not sure how to help with that using Google Workspace."}
+      </p>
+    </div>
+  );
+}
+
 // ─── Main export ────────────────────────────────────────────────────────────
 
 export default function ResultDisplay({ intent, result, onDisambiguationPick }) {
@@ -271,6 +298,7 @@ export default function ResultDisplay({ intent, result, onDisambiguationPick }) 
   if (t === 'calendar_search') return <CalendarSearchResult result={result} />;
   if (t === 'calendar_create') return <CalendarCreateResult result={result} />;
   if (t === 'drive_search')    return <DriveSearchResult result={result} />;
+  if (t === 'unsupported')     return <UnsupportedResult result={result} />;
   if (t === 'needs_disambiguation' && result.kind === 'recipient')
     return <RecipientDisambiguation result={result} onPick={onDisambiguationPick} />;
   if (t === 'needs_disambiguation' && result.kind === 'file')
