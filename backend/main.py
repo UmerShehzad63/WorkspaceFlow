@@ -113,11 +113,11 @@ ALLOWED_UPLOAD_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 
-# ── Health check ─────────────────────────────────────────────────────────────
-@app.get("/health")
+# ── Health check (registered before other routers to guarantee no conflicts) ─
+@app.get("/health", response_class=JSONResponse, status_code=200, include_in_schema=False)
 async def health():
-    """Unauthenticated liveness probe for Fly.io / Docker HEALTHCHECK."""
-    return {"status": "ok"}
+    """Unauthenticated liveness probe for Render/Render health checks."""
+    return JSONResponse(content={"status": "ok"}, status_code=200)
 
 @app.get("/")
 async def root():
