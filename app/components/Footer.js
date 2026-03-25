@@ -41,10 +41,10 @@ export default function Footer() {
 
           <div className="footer-col">
             <h4>Legal</h4>
-            <Link href="#">Privacy Policy</Link>
-            <Link href="#">Terms of Service</Link>
-            <Link href="#">Cookie Policy</Link>
-            <Link href="#">Security</Link>
+            <Link href="/privacy">Privacy Policy</Link>
+            <Link href="/terms">Terms of Service</Link>
+            <Link href="/privacy">Cookie Policy</Link>
+            <Link href="/privacy">Security</Link>
           </div>
         </div>
 
