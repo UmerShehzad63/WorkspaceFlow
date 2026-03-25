@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import CouchMailIcon from './CouchMailIcon';
+import Image from 'next/image';
 
 export default function Footer() {
   return (
@@ -8,7 +8,7 @@ export default function Footer() {
         <div className="footer-grid">
           <div className="footer-brand">
             <Link href="/" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-              <CouchMailIcon size={40} style={{ filter: 'brightness(0) invert(1)', opacity: 0.85 }} />
+              <Image src="/icon.png" alt="CouchMail" width={40} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)', opacity: 0.85 }} />
               <span style={{
                 fontFamily: "'Manrope', 'Inter', sans-serif",
                 fontWeight: 800,

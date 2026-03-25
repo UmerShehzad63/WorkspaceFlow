@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import CouchMailIcon from './CouchMailIcon';
+import Image from 'next/image';
 
 export default function Navbar({ transparent = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -11,7 +11,7 @@ export default function Navbar({ transparent = false }) {
       <nav className="navbar" style={transparent ? { background: 'transparent', borderBottom: 'none' } : {}}>
         <div className="container">
           <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <CouchMailIcon size={44} />
+            <Image src="/icon.png" alt="CouchMail" width={44} height={44} style={{ objectFit: 'contain' }} priority />
             <span style={{
               fontFamily: "'Manrope', 'Inter', sans-serif",
               fontWeight: 800,
