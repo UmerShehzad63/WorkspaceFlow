@@ -187,7 +187,7 @@ export default function PricingPage() {
       {/* CTA */}
       <section className={styles.cta}>
         <div className="container text-center">
-          <h2>Ready to try WorkspaceFlow?</h2>
+          <h2>Ready to try CouchMail?</h2>
           <p>Start your free 3-day Pro trial today. No credit card required.</p>
           <button
             onClick={() => handleCheckout(PRO_PRICE_ID, setLoading)}

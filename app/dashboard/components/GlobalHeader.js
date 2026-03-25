@@ -28,7 +28,7 @@ export default function GlobalHeader() {
     <div className={styles.headerBar}>
       <div className={styles.commandWrap}>
         <div className={styles.inputRow}>
-          <span className={styles.prefix}>⚡</span>
+          <span className={styles.prefix} style={{ color: 'var(--color-secondary)' }}>⚡</span>
           <input
             className={styles.input}
             placeholder="Run a command… e.g. 'Find emails from Sarah'"

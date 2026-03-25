@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 
 export default function Navbar({ transparent = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -10,8 +11,7 @@ export default function Navbar({ transparent = false }) {
       <nav className="navbar" style={transparent ? { background: 'transparent', borderBottom: 'none' } : {}}>
         <div className="container">
           <Link href="/" className="nav-logo">
-            <div className="nav-logo-icon">⚡</div>
-            WorkspaceFlow
+            <Image src="/logo.png" alt="CouchMail" width={120} height={36} style={{ objectFit: 'contain' }} priority />
           </Link>
 
           <ul className="nav-links">
@@ -21,8 +21,8 @@ export default function Navbar({ transparent = false }) {
           </ul>
 
           <div className="nav-actions">
-            <Link href="/login" className="btn btn-ghost">Log in</Link>
-            <Link href="/login" className="btn btn-primary">Start Free Trial</Link>
+            <Link href="/login" className="btn btn-ghost" style={{ fontWeight: 700, color: 'var(--color-primary)' }}>Sign In</Link>
+            <Link href="/login" className="btn btn-primary">Get Started</Link>
           </div>
 
           <button
@@ -42,9 +42,9 @@ export default function Navbar({ transparent = false }) {
         <Link href="/#how-it-works" onClick={() => setMenuOpen(false)}>How It Works</Link>
         <Link href="/pricing" onClick={() => setMenuOpen(false)}>Pricing</Link>
         <hr className="divider" />
-        <Link href="/login" onClick={() => setMenuOpen(false)}>Log in</Link>
+        <Link href="/login" onClick={() => setMenuOpen(false)}>Sign In</Link>
         <Link href="/login" className="btn btn-primary" style={{ textAlign: 'center', marginTop: '8px' }} onClick={() => setMenuOpen(false)}>
-          Start Free Trial
+          Get Started
         </Link>
       </div>
     </>

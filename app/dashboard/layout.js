@@ -30,9 +30,9 @@ function UpgradeModal({ plan, onClose }) {
       justifyContent: 'center', zIndex: 1000, padding: '16px',
     }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{
-        background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+        background: '#fff', border: '1px solid var(--border-color)',
         borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '780px',
-        padding: '28px', boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+        padding: '28px', boxShadow: 'var(--shadow-xl)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Choose Your Plan</h2>
@@ -42,7 +42,7 @@ function UpgradeModal({ plan, onClose }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
 
           {/* FREE */}
-          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', opacity: hasPro ? 0.5 : 1 }}>
+          <div style={{ background: 'var(--color-surface-container-low)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', opacity: hasPro ? 0.5 : 1 }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Free</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>$0<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>/mo</span></div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '14px 0 18px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
@@ -80,11 +80,11 @@ function UpgradeModal({ plan, onClose }) {
           </div>
 
           {/* PRO PLUS */}
-          <div style={{ position: 'relative', background: 'rgba(52,211,153,0.04)', border: '1px solid rgba(52,211,153,0.35)', borderRadius: '12px', padding: '20px', boxShadow: '0 0 24px rgba(52,211,153,0.1)' }}>
-            <div style={{ position: 'absolute', top: '-11px', left: '50%', transform: 'translateX(-50%)', background: 'var(--accent-green)', color: '#000', fontSize: '0.6rem', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+          <div style={{ position: 'relative', background: 'rgba(86,68,208,0.04)', border: '2px solid var(--color-secondary)', borderRadius: '12px', padding: '20px', boxShadow: 'var(--shadow-glow-purple)' }}>
+            <div style={{ position: 'absolute', top: '-11px', left: '50%', transform: 'translateX(-50%)', background: 'var(--color-secondary)', color: '#fff', fontSize: '0.6rem', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
               ⭐ Most Popular
             </div>
-            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--accent-green)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Pro Plus</div>
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Pro Plus</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>$19<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>/mo</span></div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '14px 0 18px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
               {['Everything in Pro', 'Unlimited automations', 'Advanced AI commands', 'Priority support'].map(f => (
@@ -95,7 +95,7 @@ function UpgradeModal({ plan, onClose }) {
             </ul>
             {isProPlus
               ? <button disabled style={greyBtn}>Current Plan</button>
-              : <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem', background: 'var(--accent-green)', color: '#000' }}>Upgrade to Pro Plus →</Link>
+              : <Link href="/pricing" onClick={onClose} className="btn btn-primary" style={{ display: 'block', textAlign: 'center', fontSize: '0.82rem' }}>Upgrade to Pro Plus →</Link>
             }
           </div>
 
@@ -139,11 +139,11 @@ function CommandResultOverlay() {
       </div>
 
       {error ? (
-        <div className="card" style={{ padding: '20px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)' }}>
+        <div className="card" style={{ padding: '20px', background: 'rgba(220,38,38,0.04)', border: '1px solid rgba(220,38,38,0.15)' }}>
           <strong style={{ color: '#ef4444' }}>⚠️ {error}</strong>
         </div>
       ) : (
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--accent-blue)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-glow)' }}>
+        <div style={{ background: '#fff', border: '1px solid var(--border-accent)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-glow-purple)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>
               {isDisambig
@@ -212,8 +212,8 @@ export default function DashboardLayout({ children }) {
 
   if (loading) {
     return (
-      <div className="loading-screen" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-        <p>Initializing Session...</p>
+      <div className="loading-screen" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface)', color: 'var(--text-primary)' }}>
+        <img src="/logo.png" alt="CouchMail" style={{ height: '40px', opacity: 0.5 }} />
       </div>
     );
   }
@@ -225,17 +225,16 @@ export default function DashboardLayout({ children }) {
         {/* ── Sidebar ───────────────────────────────────────────────────── */}
         <aside className="sidebar" style={{ top: 0 }}>
           <div className="sidebar-header">
-            <Link href="/" className="nav-logo" style={{ marginBottom: '24px' }}>
-              <div className="nav-logo-icon">⚡</div>
-              WorkspaceFlow
+            <Link href="/" style={{ display: 'inline-block', marginBottom: '8px' }}>
+              <img src="/logo.png" alt="CouchMail" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
             </Link>
           </div>
 
           {/* User info */}
           <div style={{ marginBottom: '16px' }}>
-            <div style={{ padding: '12px 16px', background: 'rgba(52,211,153,0.03)', border: '1px solid var(--border-color)', borderRadius: '10px', fontSize: '0.78rem', marginBottom: '10px' }}>
+            <div style={{ padding: '12px 16px', background: 'var(--color-surface-container-low)', border: '1px solid var(--border-color)', borderRadius: '10px', fontSize: '0.78rem', marginBottom: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--gradient-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', fontWeight: 700 }}>
+                <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--color-primary), var(--color-secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', fontWeight: 700, color: '#fff' }}>
                   {user?.email?.[0].toUpperCase() || 'U'}
                 </div>
                 <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -247,27 +246,27 @@ export default function DashboardLayout({ children }) {
 
             {/* Plan badge */}
             {(plan === 'trialing' || plan === 'pro_trial') && (
-              <div style={{ padding: '10px 14px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
+              <div style={{ padding: '10px 14px', background: 'rgba(86,68,208,0.06)', border: '1px solid rgba(86,68,208,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
                   <span>🎁</span>
-                  <strong style={{ color: 'var(--accent-green)', fontSize: '0.75rem' }}>Pro Trial Active</strong>
+                  <strong style={{ color: 'var(--color-secondary)', fontSize: '0.75rem' }}>Pro Trial Active</strong>
                 </div>
                 <span style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem' }}>Upgrade before trial ends</span>
               </div>
             )}
             {plan === 'pro' && (
-              <div style={{ padding: '10px 14px', background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
+              <div style={{ padding: '10px 14px', background: 'rgba(86,68,208,0.06)', border: '1px solid rgba(86,68,208,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span>⚡</span>
-                  <strong style={{ color: 'var(--accent-blue)', fontSize: '0.75rem' }}>Pro Plan</strong>
+                  <strong style={{ color: 'var(--color-secondary)', fontSize: '0.75rem' }}>Pro Plan</strong>
                 </div>
               </div>
             )}
             {plan === 'pro_plus' && (
-              <div style={{ padding: '10px 14px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
+              <div style={{ padding: '10px 14px', background: 'rgba(86,68,208,0.06)', border: '1px solid rgba(86,68,208,0.15)', borderRadius: '10px', fontSize: '0.78rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span>🚀</span>
-                  <strong style={{ color: 'var(--accent-green)', fontSize: '0.75rem' }}>Pro Plus Plan</strong>
+                  <strong style={{ color: 'var(--color-secondary)', fontSize: '0.75rem' }}>Pro Plus Plan</strong>
                 </div>
               </div>
             )}
@@ -307,7 +306,7 @@ export default function DashboardLayout({ children }) {
           </div>
 
           {/* Bottom actions */}
-          <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
             {/* Upgrade CTA — plan-aware */}
             {(plan === 'free' || plan === 'trialing' || plan === 'pro_trial') && (
               <button

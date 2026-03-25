@@ -1,0 +1,5 @@
+{
+  "name": "CouchMail",
+  "description": "AI-powered daily briefings that synthesize your Google Workspace into actionable morning dossiers.",
+  "requestFramePermissions": []
+}

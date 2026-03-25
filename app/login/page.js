@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import styles from './login.module.css';
@@ -31,9 +32,8 @@ export default function LoginPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <Link href="/" className="nav-logo" style={{ justifyContent: 'center', marginBottom: '32px', display: 'flex' }}>
-          <div className="nav-logo-icon">⚡</div>
-          WorkspaceFlow
+        <Link href="/" style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px' }}>
+          <Image src="/logo.png" alt="CouchMail" width={150} height={46} style={{ objectFit: 'contain' }} priority />
         </Link>
 
         <h1>Connect your Google Workspace</h1>

@@ -102,7 +102,7 @@ export default function LandingPage() {
               Three ways to <span className="text-gradient">reclaim your time</span>
             </h2>
             <p className={styles.sectionSubtitle}>
-              From morning briefings to natural language commands, WorkspaceFlow handles the repetitive work so you can focus on what matters.
+              From morning briefings to natural language commands, CouchMail handles the repetitive work so you can focus on what matters.
             </p>
           </div>
 
@@ -280,7 +280,7 @@ export default function LandingPage() {
         <div className="container">
           <div className={styles.sectionHeader}>
             <span className={styles.sectionTag}>Comparison</span>
-            <h2 className={styles.sectionTitle}>Why teams <span className="text-gradient">switch to WorkspaceFlow</span></h2>
+            <h2 className={styles.sectionTitle}>Why teams <span className="text-gradient">switch to CouchMail</span></h2>
           </div>
 
           <div className={styles.comparisonTable}>
@@ -288,7 +288,7 @@ export default function LandingPage() {
               <thead>
                 <tr>
                   <th>Feature</th>
-                  <th className={styles.highlighted}>WorkspaceFlow</th>
+                  <th className={styles.highlighted}>CouchMail</th>
                   <th>Zapier</th>
                   <th>Make.com</th>
                   <th>Google Native</th>
@@ -361,7 +361,7 @@ export default function LandingPage() {
           <div className={styles.testimonialsGrid}>
             <div className={`card ${styles.testimonialCard}`}>
               <p className={styles.testimonialText}>
-                &quot;I tried setting up Zapier to organize my inbox and gave up after an hour. I just wanted to automatically label invoices. WorkspaceFlow did it in one sentence.&quot;
+                &quot;I tried setting up Zapier to organize my inbox and gave up after an hour. I just wanted to automatically label invoices. CouchMail did it in one sentence.&quot;
               </p>
               <div className={styles.testimonialAuthor}>
                 <div className={styles.testimonialAvatar}>🎨</div>
@@ -374,7 +374,7 @@ export default function LandingPage() {
 
             <div className={`card ${styles.testimonialCard}`}>
               <p className={styles.testimonialText}>
-                &quot;Every morning I spent 20 minutes figuring out what I need to prep for each meeting. Now WorkspaceFlow does it for me before I even open my laptop.&quot;
+                &quot;Every morning I spent 20 minutes figuring out what I need to prep for each meeting. Now CouchMail does it for me before I even open my laptop.&quot;
               </p>
               <div className={styles.testimonialAuthor}>
                 <div className={styles.testimonialAvatar}>💼</div>
@@ -387,7 +387,7 @@ export default function LandingPage() {
 
             <div className={`card ${styles.testimonialCard}`}>
               <p className={styles.testimonialText}>
-                &quot;I was paying $50/month for Zapier and only used it for 3 things, all in Google. WorkspaceFlow is $9 and does it better.&quot;
+                &quot;I was paying $50/month for Zapier and only used it for 3 things, all in Google. CouchMail is $9 and does it better.&quot;
               </p>
               <div className={styles.testimonialAuthor}>
                 <div className={styles.testimonialAvatar}>🏢</div>
@@ -465,7 +465,7 @@ export default function LandingPage() {
         <div className="container text-center">
           <h2 className={styles.ctaTitle}>Ready to reclaim your mornings?</h2>
           <p className={styles.ctaSubtitle}>
-            Join 1,000+ operators who save 30+ minutes every day with WorkspaceFlow.
+            Join 1,000+ operators who save 30+ minutes every day with CouchMail.
           </p>
           <div className={styles.ctaButtons}>
             <Link href="/login" className="btn btn-primary btn-lg">

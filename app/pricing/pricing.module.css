@@ -83,7 +83,7 @@
 }
 
 .highlighted {
-  background: rgba(79, 125, 249, 0.04);
+  background: rgba(86, 68, 208, 0.05);
   color: var(--text-primary) !important;
   font-weight: 500;
 }
@@ -110,9 +110,10 @@
 
 .faqItem {
   padding: 24px;
-  background: var(--bg-card);
+  background: #fff;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .faqItem h3 {

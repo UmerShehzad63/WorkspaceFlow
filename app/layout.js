@@ -1,9 +1,9 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "WorkspaceFlow — Your Google Workspace, on Autopilot",
-  description: "AI-powered automation for Google Workspace. Get daily morning briefings, natural language commands, and automated rules. Save 30+ minutes every day.",
-  keywords: "Google Workspace, automation, morning briefing, AI, productivity, Gmail, Google Calendar, Google Drive",
+  title: "CouchMail — AI-Powered Unified Workspace",
+  description: "AI-powered daily briefings that synthesize your emails, docs, and calendar into a single, actionable morning dossier. Handle your day before it handles you.",
+  keywords: "Google Workspace, automation, morning briefing, AI, productivity, Gmail, Google Calendar, Google Drive, CouchMail",
 };
 
 export default function RootLayout({ children }) {

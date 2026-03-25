@@ -16,7 +16,7 @@
   transform: translateX(-50%);
   width: 800px;
   height: 600px;
-  background: radial-gradient(ellipse, rgba(79, 125, 249, 0.12) 0%, rgba(139, 92, 246, 0.06) 40%, transparent 70%);
+  background: radial-gradient(ellipse, rgba(86, 68, 208, 0.1) 0%, rgba(0, 24, 87, 0.04) 40%, transparent 70%);
   pointer-events: none;
   z-index: 0;
 }
@@ -27,7 +27,7 @@
   right: -200px;
   width: 500px;
   height: 500px;
-  background: radial-gradient(circle, rgba(139, 92, 246, 0.08), transparent 60%);
+  background: radial-gradient(circle, rgba(86, 68, 208, 0.06), transparent 60%);
   pointer-events: none;
   z-index: 0;
 }
@@ -44,11 +44,11 @@
   align-items: center;
   gap: 8px;
   padding: 6px 16px;
-  background: rgba(79, 125, 249, 0.08);
-  border: 1px solid rgba(79, 125, 249, 0.2);
+  background: rgba(86, 68, 208, 0.07);
+  border: 1px solid rgba(86, 68, 208, 0.18);
   border-radius: 100px;
   font-size: 0.8rem;
-  color: var(--accent-blue-light);
+  color: var(--color-secondary);
   font-weight: 500;
   margin-bottom: 24px;
 }
@@ -90,8 +90,8 @@
 }
 
 .previewCard {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--color-primary);
+  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 16px;
   overflow: hidden;
   box-shadow: var(--shadow-xl), var(--shadow-glow);
@@ -102,8 +102,8 @@
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
+  background: rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
 .previewDots {
@@ -125,12 +125,16 @@
 
 .previewTitle {
   font-size: 0.75rem;
-  color: var(--text-tertiary);
+  color: rgba(255,255,255,0.45);
   font-weight: 500;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .previewBody {
   padding: 20px;
+  background: var(--color-primary);
 }
 
 .previewSection {
@@ -145,19 +149,19 @@
   display: block;
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--text-muted);
+  color: rgba(255,255,255,0.5);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-bottom: 12px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
 .previewEvent {
   display: flex;
   gap: 12px;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .previewEvent:last-child {
@@ -175,24 +179,24 @@
 .eventTitle {
   font-size: 0.85rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: #fff;
   margin-bottom: 2px;
 }
 
 .eventMeta {
   font-size: 0.72rem;
-  color: var(--text-tertiary);
+  color: rgba(255,255,255,0.45);
 }
 
 .eventRelated {
   font-size: 0.7rem;
-  color: var(--text-muted);
+  color: rgba(255,255,255,0.35);
   margin-top: 4px;
 }
 
 .previewText {
   font-size: 0.78rem;
-  color: var(--text-secondary);
+  color: rgba(255,255,255,0.6);
   line-height: 1.6;
 }
 
@@ -208,7 +212,7 @@
   padding: 40px 0;
   border-top: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  background: var(--color-surface-container);
 }
 
 .socialText {
@@ -245,12 +249,12 @@
 .sectionTag {
   display: inline-block;
   padding: 4px 14px;
-  background: rgba(79, 125, 249, 0.08);
-  border: 1px solid rgba(79, 125, 249, 0.15);
+  background: rgba(86, 68, 208, 0.07);
+  border: 1px solid rgba(86, 68, 208, 0.18);
   border-radius: 100px;
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--accent-blue-light);
+  color: var(--color-secondary);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin-bottom: 16px;
@@ -283,8 +287,9 @@
 }
 
 .featureCardFeatured {
-  border-color: rgba(139, 92, 246, 0.3);
-  background: rgba(139, 92, 246, 0.03);
+  border-color: rgba(86, 68, 208, 0.3);
+  background: rgba(86, 68, 208, 0.03);
+  border-left: 4px solid var(--color-secondary);
 }
 
 .featureIcon {
@@ -329,9 +334,29 @@
 
 /* ===== How It Works ===== */
 .howItWorks {
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
-  border-bottom: 1px solid var(--border-color);
+  background: var(--color-primary);
+  border-top: none;
+  border-bottom: none;
+}
+
+.howItWorks .sectionTitle,
+.howItWorks h2,
+.howItWorks h3 {
+  color: #fff;
+}
+
+.howItWorks .step p {
+  color: rgba(255,255,255,0.6);
+}
+
+.howItWorks .stepConnector {
+  color: rgba(255,255,255,0.2);
+}
+
+.howItWorks .sectionTag {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.7);
 }
 
 .stepsGrid {
@@ -387,7 +412,7 @@
 }
 
 .briefingEmail {
-  background: var(--bg-secondary);
+  background: #ffffff;
   border: 1px solid var(--border-color);
   border-radius: 16px;
   overflow: hidden;
@@ -396,7 +421,7 @@
 
 .briefingEmailHeader {
   padding: 16px 24px;
-  background: var(--bg-tertiary);
+  background: var(--color-surface-container);
   border-bottom: 1px solid var(--border-color);
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -424,7 +449,7 @@
 
 .briefingEvent {
   padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .briefingEvent:last-child {
@@ -543,7 +568,7 @@
 
 /* ===== Comparison Table ===== */
 .comparisonSection {
-  background: var(--bg-secondary);
+  background: var(--color-surface-container);
   border-top: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
 }
@@ -585,7 +610,7 @@
 }
 
 .highlighted {
-  background: rgba(79, 125, 249, 0.04);
+  background: rgba(86, 68, 208, 0.05);
   color: var(--text-primary) !important;
 }
 
@@ -652,7 +677,7 @@
 /* ===== Final CTA ===== */
 .finalCta {
   padding: 100px 0;
-  background: var(--gradient-hero);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
   position: relative;
   overflow: hidden;
 }
@@ -665,7 +690,7 @@
   transform: translate(-50%, -50%);
   width: 600px;
   height: 400px;
-  background: radial-gradient(ellipse, rgba(79, 125, 249, 0.1), transparent 60%);
+  background: radial-gradient(ellipse, rgba(255,255,255,0.06), transparent 60%);
   pointer-events: none;
 }
 
@@ -676,9 +701,13 @@
   position: relative;
 }
 
+.ctaTitle {
+  color: #fff;
+}
+
 .ctaSubtitle {
   font-size: 1.1rem;
-  color: var(--text-secondary);
+  color: rgba(255,255,255,0.7);
   margin-bottom: 32px;
   position: relative;
 }

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 export default function Footer() {
   return (
@@ -6,11 +7,10 @@ export default function Footer() {
       <div className="container">
         <div className="footer-grid">
           <div className="footer-brand">
-            <Link href="/" className="nav-logo" style={{ marginBottom: '4px' }}>
-              <div className="nav-logo-icon">⚡</div>
-              WorkspaceFlow
+            <Link href="/" style={{ display: 'inline-block', marginBottom: '4px' }}>
+              <Image src="/logo.png" alt="CouchMail" width={130} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
             </Link>
-            <p>AI-powered automation for Google Workspace. Save 30+ minutes every day with intelligent briefings, natural language commands, and automated rules.</p>
+            <p>Intelligence for the modern workspace. AI-powered briefings that synthesize your emails, docs, and calendar into one actionable daily dossier.</p>
           </div>
 
           <div className="footer-col">
@@ -39,11 +39,11 @@ export default function Footer() {
         </div>
 
         <div className="footer-bottom">
-          <span>© 2026 WorkspaceFlow. All rights reserved.</span>
+          <span>© 2026 CouchMail. All rights reserved.</span>
           <div style={{ display: 'flex', gap: '16px' }}>
-            <Link href="#">Twitter</Link>
-            <Link href="#">LinkedIn</Link>
-            <Link href="#">GitHub</Link>
+            <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>Twitter</Link>
+            <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>LinkedIn</Link>
+            <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>GitHub</Link>
           </div>
         </div>
       </div>

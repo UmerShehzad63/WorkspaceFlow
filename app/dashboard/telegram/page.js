@@ -181,7 +181,7 @@ export default function TelegramPage() {
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
             {isConnected
               ? `Briefings are being sent to ${status.username ? `@${status.username}` : 'your Telegram'}.`
-              : 'Click the button below to open the WorkspaceFlow bot on Telegram. It will automatically link your account.'}
+              : 'Click the button below to open the CouchMail bot on Telegram. It will automatically link your account.'}
           </p>
 
           {/* Status badge */}
