@@ -73,7 +73,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -736,6 +736,172 @@ async def send_daily_briefings_endpoint(request: Request):
     print("[Cron] /api/briefing/send-daily triggered")
     counts = await send_daily_briefings()
     return counts if isinstance(counts, dict) else {"sent": 0, "skipped": 0, "errors": 0}
+
+
+# ── Automations CRUD ─────────────────────────────────────────────────────────
+
+def _sb_service_headers() -> dict:
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    return {
+        "Authorization": f"Bearer {key}",
+        "apikey":        key,
+        "Content-Type":  "application/json",
+    }
+
+
+@app.get("/api/automations")
+@limiter.limit("30/minute")
+async def list_automations(request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+    sb_url  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url = (
+        f"{sb_url}/rest/v1/automations"
+        f"?user_id=eq.{user_id}"
+        f"&order=created_at.desc"
+        f"&select=id,template_id,name,description,schedule,field_values,"
+        f"is_active,last_run_at,run_count,items_processed,created_at"
+    )
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url, headers=_sb_service_headers())
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Failed to fetch automations")
+    return resp.json()
+
+
+@app.post("/api/automations")
+@limiter.limit("30/minute")
+async def create_automation(request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+    data    = await request.json()
+
+    # Plan limit check
+    sb_url  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    profile_url = f"{sb_url}/rest/v1/profiles?id=eq.{user_id}&select=plan"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        presp    = await client.get(profile_url, headers=_sb_service_headers())
+        profiles = presp.json() if presp.status_code == 200 else []
+    plan = (profiles[0].get("plan") or "free").lower() if profiles else "free"
+
+    PRO_PLANS = {"pro", "pro_plus", "trialing", "pro_trial", "active"}
+    if plan not in PRO_PLANS:
+        raise HTTPException(status_code=403, detail="Automations require a Pro plan.")
+
+    # Count existing automations
+    count_url = f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&select=id"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        cresp   = await client.get(count_url, headers=_sb_service_headers())
+        current = cresp.json() if cresp.status_code == 200 else []
+    limit = 5 if plan != "pro_plus" else None
+    if limit and len(current) >= limit:
+        raise HTTPException(status_code=403, detail=f"Pro plan limit is {limit} automations. Upgrade to Pro Plus for unlimited.")
+
+    payload = {
+        "user_id":      user_id,
+        "template_id":  data.get("template_id", ""),
+        "name":         (data.get("name") or "")[:200],
+        "description":  (data.get("description") or "")[:500],
+        "schedule":     (data.get("schedule") or "")[:100],
+        "field_values": data.get("field_values") or {},
+        "is_active":    True,
+    }
+    url = f"{sb_url}/rest/v1/automations"
+    headers = {**_sb_service_headers(), "Prefer": "return=representation"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=502, detail="Failed to save automation")
+    rows = resp.json()
+    return rows[0] if rows else {}
+
+
+@app.patch("/api/automations/{automation_id}")
+@limiter.limit("30/minute")
+async def update_automation(automation_id: str, request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+    data    = await request.json()
+
+    allowed = {"name", "description", "schedule", "field_values", "is_active"}
+    patch   = {k: v for k, v in data.items() if k in allowed}
+    if not patch:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    sb_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url    = f"{sb_url}/rest/v1/automations?id=eq.{automation_id}&user_id=eq.{user_id}"
+    headers = {**_sb_service_headers(), "Prefer": "return=representation"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.patch(url, json=patch, headers=headers)
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail="Failed to update automation")
+    rows = resp.json() if resp.content else []
+    return rows[0] if rows else {"ok": True}
+
+
+@app.delete("/api/automations/{automation_id}")
+@limiter.limit("30/minute")
+async def delete_automation(automation_id: str, request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    sb_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url    = f"{sb_url}/rest/v1/automations?id=eq.{automation_id}&user_id=eq.{user_id}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.delete(url, headers=_sb_service_headers())
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail="Failed to delete automation")
+    return {"ok": True}
+
+
+@app.post("/api/automations/{automation_id}/run")
+@limiter.limit("10/minute")
+async def run_automation_now(automation_id: str, request: Request):
+    """Manually trigger a single automation (test run)."""
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    sb_url  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    # Fetch the automation
+    url = f"{sb_url}/rest/v1/automations?id=eq.{automation_id}&user_id=eq.{user_id}&select=*"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url, headers=_sb_service_headers())
+    rows = resp.json() if resp.status_code == 200 else []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    automation = rows[0]
+
+    # Fetch user's Google tokens
+    profile_url = f"{sb_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        presp    = await client.get(profile_url, headers=_sb_service_headers())
+        profiles = presp.json() if presp.status_code == 200 else []
+    if not profiles or not profiles[0].get("google_access_token"):
+        raise HTTPException(status_code=400, detail="Google account not connected.")
+
+    profile       = profiles[0]
+    access_token  = profile["google_access_token"]
+    refresh_token = profile.get("google_refresh_token")
+
+    from jobs.automation_executor import execute_automation
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        functools.partial(execute_automation, automation, access_token, refresh_token),
+    )
+
+    # Update last_run_at
+    now = datetime.now(timezone.utc).isoformat()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.patch(
+            f"{sb_url}/rest/v1/automations?id=eq.{automation_id}",
+            json={"last_run_at": now, "updated_at": now},
+            headers={**_sb_service_headers(), "Prefer": "return=minimal"},
+        )
+
+    return result
 
 
 if __name__ == "__main__":

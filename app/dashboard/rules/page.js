@@ -1,8 +1,10 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import styles from './rules.module.css';
 import { usePlan, isPro } from '../plan-context';
+
+const BACKEND = () => process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
 // ─── Template definitions ──────────────────────────────────────────────────
 
@@ -22,7 +24,7 @@ const TEMPLATE_CATEGORIES = [
           { key: 'match_value', label: 'Value to match', type: 'text', placeholder: 'e.g. newsletter@company.com' },
           { key: 'label_name', label: 'Label to apply', type: 'text', placeholder: 'e.g. Newsletters' },
         ],
-        summary: (f) => `Applies the label "${f.label_name || '…'}" to all emails where ${(f.match_by || 'sender').toLowerCase()} matches "${f.match_value || '…'}".`,
+        summary: (f) => `Applies the label "${f.label_name || '…'}" to emails where ${(f.match_by || 'sender').toLowerCase()} matches "${f.match_value || '…'}".`,
         schedule: 'On new email',
       },
       {
@@ -34,7 +36,7 @@ const TEMPLATE_CATEGORIES = [
           { key: 'days', label: 'Archive newsletters older than (days)', type: 'number', placeholder: '3' },
           { key: 'run_time', label: 'Run daily at', type: 'time', placeholder: '07:00' },
         ],
-        summary: (f) => `Runs every day at ${f.run_time || '07:00'} and archives all newsletter emails older than ${f.days || 'X'} days.`,
+        summary: (f) => `Runs every day at ${f.run_time || '07:00'} and archives newsletters older than ${f.days || 'X'} days.`,
         schedule: (f) => `Daily at ${f.run_time || '07:00'}`,
       },
       {
@@ -51,14 +53,18 @@ const TEMPLATE_CATEGORIES = [
       },
       {
         id: 'gmail-forward-keyword',
-        name: 'Forward emails matching a keyword',
-        desc: 'Auto-forward any email containing a keyword to another email address',
+        name: 'Forward emails matching keywords',
+        desc: 'Auto-forward any email containing matching keywords to one or more email addresses',
         icon: '↗️',
         fields: [
-          { key: 'keyword', label: 'Keyword to match (in subject or body)', type: 'text', placeholder: 'e.g. urgent' },
-          { key: 'forward_to', label: 'Forward to email address', type: 'email', placeholder: 'teammate@company.com' },
+          { key: 'keywords', label: 'Keywords to match (press Enter to add each)', type: 'tags', placeholder: 'e.g. urgent' },
+          { key: 'forward_to', label: 'Forward to (press Enter to add each email)', type: 'tags', placeholder: 'teammate@company.com' },
         ],
-        summary: (f) => `Forwards every email containing "${f.keyword || '…'}" to ${f.forward_to || '…'}.`,
+        summary: (f) => {
+          const kws = Array.isArray(f.keywords) ? f.keywords : (f.keywords ? [f.keywords] : []);
+          const fws = Array.isArray(f.forward_to) ? f.forward_to : (f.forward_to ? [f.forward_to] : []);
+          return `Forwards emails containing ${kws.length ? kws.map(k => `"${k}"`).join(' or ') : '…'} to ${fws.join(', ') || '…'}.`;
+        },
         schedule: 'On new email',
       },
       {
@@ -70,30 +76,33 @@ const TEMPLATE_CATEGORIES = [
           { key: 'days', label: 'Follow up after (days with no reply)', type: 'number', placeholder: '3' },
           { key: 'label', label: 'Apply to emails with label (optional)', type: 'text', placeholder: 'e.g. Awaiting Reply' },
         ],
-        summary: (f) => `Sends you a follow-up reminder ${f.days || 'X'} days after an email with no reply${f.label ? ` (label: "${f.label}")` : ''}.`,
+        summary: (f) => `Sends a follow-up reminder ${f.days || 'X'} days after a sent email with no reply.`,
         schedule: 'Daily check',
       },
       {
         id: 'gmail-vip-flag',
         name: 'Flag emails from VIP contacts instantly',
-        desc: 'Immediately star or label emails from your most important contacts',
+        desc: 'Immediately star or mark-important emails from your most important contacts',
         icon: '⭐',
         fields: [
-          { key: 'sender', label: 'VIP sender email or domain', type: 'text', placeholder: 'boss@company.com or @company.com' },
+          { key: 'senders', label: 'VIP senders (press Enter to add each email or domain)', type: 'tags', placeholder: 'boss@company.com' },
           { key: 'action', label: 'Action to take', type: 'select', options: ['Star it', 'Label as VIP', 'Mark as important'] },
         ],
-        summary: (f) => `When an email arrives from "${f.sender || '…'}", ${(f.action || 'stars it').toLowerCase()}.`,
+        summary: (f) => {
+          const senders = Array.isArray(f.senders) ? f.senders : (f.senders ? [f.senders] : []);
+          return `When email arrives from ${senders.length ? senders.join(', ') : '…'}, ${(f.action || 'marks it as important').toLowerCase()}.`;
+        },
         schedule: 'On new email',
       },
       {
         id: 'gmail-receipts',
         name: 'Auto-move receipts and invoices to a label',
-        desc: 'Automatically sort receipt and invoice emails into a dedicated label',
+        desc: 'Automatically archive receipt and invoice emails',
         icon: '🧾',
         fields: [
           { key: 'label_name', label: 'Destination label name', type: 'text', placeholder: 'e.g. Receipts' },
         ],
-        summary: (f) => `Moves all emails matching receipt and invoice keywords into the "${f.label_name || '…'}" label.`,
+        summary: (f) => `Archives all receipt and invoice emails${f.label_name ? ` (label: "${f.label_name}")` : ''}.`,
         schedule: 'On new email',
       },
       {
@@ -102,10 +111,13 @@ const TEMPLATE_CATEGORIES = [
         desc: 'Get an immediate notification when a key contact sends you an email',
         icon: '🚨',
         fields: [
-          { key: 'sender', label: 'Sender email address', type: 'email', placeholder: 'person@example.com' },
+          { key: 'sender', label: 'Sender email address(es)', type: 'tags', placeholder: 'person@example.com' },
           { key: 'notify_method', label: 'How to alert', type: 'select', options: ['Mark as important', 'Star + Label as VIP', 'Forward to another address'] },
         ],
-        summary: (f) => `When an email arrives from ${f.sender || '…'}, ${(f.notify_method || 'marks it as important').toLowerCase()}.`,
+        summary: (f) => {
+          const senders = Array.isArray(f.sender) ? f.sender : (f.sender ? [f.sender] : []);
+          return `When an email arrives from ${senders.join(', ') || '…'}, ${(f.notify_method || 'marks it as important').toLowerCase()}.`;
+        },
         schedule: 'On new email',
       },
       {
@@ -126,11 +138,15 @@ const TEMPLATE_CATEGORIES = [
         desc: 'Alert or forward if an urgent email hasn\'t been replied to within a set time',
         icon: '⚡',
         fields: [
-          { key: 'keyword', label: 'Urgency keyword in subject', type: 'text', placeholder: 'e.g. urgent' },
+          { key: 'keywords', label: 'Urgency keywords (press Enter to add each)', type: 'tags', placeholder: 'e.g. urgent' },
           { key: 'hours', label: 'Escalate after (hours without reply)', type: 'number', placeholder: '4' },
-          { key: 'escalate_to', label: 'Escalate to email address', type: 'email', placeholder: 'manager@company.com' },
+          { key: 'escalate_to', label: 'Escalate to (press Enter to add each email)', type: 'tags', placeholder: 'manager@company.com' },
         ],
-        summary: (f) => `If an email with "${f.keyword || '…'}" in the subject has no reply after ${f.hours || 'X'} hours, forwards it to ${f.escalate_to || '…'}.`,
+        summary: (f) => {
+          const kws = Array.isArray(f.keywords) ? f.keywords : (f.keywords ? [f.keywords] : []);
+          const tos = Array.isArray(f.escalate_to) ? f.escalate_to : (f.escalate_to ? [f.escalate_to] : []);
+          return `If email with ${kws.length ? kws.map(k => `"${k}"`).join(' or ') : '…'} has no reply after ${f.hours || 'X'} hours, forwards to ${tos.join(', ') || '…'}.`;
+        },
         schedule: 'Hourly check',
       },
     ],
@@ -149,7 +165,7 @@ const TEMPLATE_CATEGORIES = [
           { key: 'minutes_before', label: 'Send reminder (minutes before meeting)', type: 'number', placeholder: '30' },
           { key: 'message', label: 'Reminder message (optional)', type: 'textarea', placeholder: 'Reminder: we have a meeting starting soon.' },
         ],
-        summary: (f) => `Emails all attendees ${f.minutes_before || '30'} minutes before each meeting with a reminder.`,
+        summary: (f) => `Emails all attendees ${f.minutes_before || '30'} minutes before each meeting.`,
         schedule: 'Before each meeting',
       },
       {
@@ -160,7 +176,7 @@ const TEMPLATE_CATEGORIES = [
         fields: [
           { key: 'calendar', label: 'Add to which calendar', type: 'select', options: ['Primary', 'Work', 'Personal'] },
         ],
-        summary: (f) => `When a meeting invite arrives in Gmail, automatically creates an event in your ${f.calendar || 'Primary'} calendar.`,
+        summary: (f) => `When a meeting invite arrives in Gmail, creates an event in your ${f.calendar || 'Primary'} calendar.`,
         schedule: 'On new email',
       },
       {
@@ -173,7 +189,7 @@ const TEMPLATE_CATEGORIES = [
           { key: 'duration', label: 'Duration (hours)', type: 'number', placeholder: '2' },
           { key: 'event_title', label: 'Event title', type: 'text', placeholder: 'Focus Time' },
         ],
-        summary: (f) => `Creates a "${f.event_title || 'Focus Time'}" block starting at ${f.start_time || '09:00'} for ${f.duration || '2'} hours every weekday.`,
+        summary: (f) => `Creates "${f.event_title || 'Focus Time'}" at ${f.start_time || '09:00'} for ${f.duration || '2'} hours every weekday.`,
         schedule: 'Daily (weekdays)',
       },
       {
@@ -184,7 +200,7 @@ const TEMPLATE_CATEGORIES = [
         fields: [
           { key: 'notify_by', label: 'Notify me by', type: 'select', options: ['Email', 'Flag in calendar', 'Both'] },
         ],
-        summary: (f) => `Notifies you by ${(f.notify_by || 'email').toLowerCase()} whenever a meeting is scheduled with no agenda or description.`,
+        summary: (f) => `Notifies you by ${(f.notify_by || 'email').toLowerCase()} when a meeting has no agenda.`,
         schedule: 'On new calendar event',
       },
       {
@@ -197,20 +213,8 @@ const TEMPLATE_CATEGORIES = [
           { key: 'work_end', label: 'Work day ends at', type: 'time', placeholder: '18:00' },
           { key: 'decline_msg', label: 'Decline message', type: 'text', placeholder: 'I\'m not available outside working hours.' },
         ],
-        summary: (f) => `Auto-declines any meeting outside ${f.work_start || '09:00'}–${f.work_end || '18:00'} with your custom message.`,
+        summary: (f) => `Auto-declines meetings outside ${f.work_start || '09:00'}–${f.work_end || '18:00'}.`,
         schedule: 'On new calendar event',
-      },
-      {
-        id: 'cal-form-event',
-        name: 'Create event from Google Form submission',
-        desc: 'When a Google Form is submitted, automatically create a calendar event',
-        icon: '📋',
-        fields: [
-          { key: 'form_name', label: 'Google Form name', type: 'text', placeholder: 'e.g. Booking Form' },
-          { key: 'calendar', label: 'Add event to calendar', type: 'select', options: ['Primary', 'Work', 'Shared team calendar'] },
-        ],
-        summary: (f) => `When "${f.form_name || '…'}" is submitted, creates an event in the ${f.calendar || 'Primary'} calendar.`,
-        schedule: 'On Form submission',
       },
     ],
   },
@@ -226,9 +230,12 @@ const TEMPLATE_CATEGORIES = [
         icon: '✏️',
         fields: [
           { key: 'file_name', label: 'File or folder name', type: 'text', placeholder: 'e.g. Q1 Budget.xlsx' },
-          { key: 'notify_email', label: 'Send alert to', type: 'email', placeholder: 'you@example.com' },
+          { key: 'notify_email', label: 'Send alert to', type: 'tags', placeholder: 'you@example.com' },
         ],
-        summary: (f) => `Sends an email to ${f.notify_email || '…'} whenever "${f.file_name || '…'}" is edited.`,
+        summary: (f) => {
+          const tos = Array.isArray(f.notify_email) ? f.notify_email : (f.notify_email ? [f.notify_email] : []);
+          return `Sends an email to ${tos.join(', ') || '…'} whenever "${f.file_name || '…'}" is edited.`;
+        },
         schedule: 'On file edit',
       },
       {
@@ -238,10 +245,13 @@ const TEMPLATE_CATEGORIES = [
         icon: '🤝',
         fields: [
           { key: 'folder_name', label: 'Watch this folder', type: 'text', placeholder: 'e.g. Shared Projects' },
-          { key: 'share_with', label: 'Share with (comma-separated emails)', type: 'text', placeholder: 'alice@co.com, bob@co.com' },
+          { key: 'share_with', label: 'Share with (press Enter to add each email)', type: 'tags', placeholder: 'alice@co.com' },
           { key: 'permission', label: 'Permission level', type: 'select', options: ['Viewer', 'Commenter', 'Editor'] },
         ],
-        summary: (f) => `Any new file in "${f.folder_name || '…'}" is automatically shared with ${f.share_with || '…'} as ${(f.permission || 'Viewer').toLowerCase()}.`,
+        summary: (f) => {
+          const tos = Array.isArray(f.share_with) ? f.share_with : (f.share_with ? [f.share_with] : []);
+          return `New files in "${f.folder_name || '…'}" shared with ${tos.join(', ') || '…'} as ${(f.permission || 'Viewer').toLowerCase()}.`;
+        },
         schedule: 'On new Drive file',
       },
       {
@@ -252,9 +262,12 @@ const TEMPLATE_CATEGORIES = [
         fields: [
           { key: 'file_name', label: 'File or folder to watch', type: 'text', placeholder: 'e.g. Weekly Report.docx' },
           { key: 'days', label: 'Alert after no update for (days)', type: 'number', placeholder: '7' },
-          { key: 'notify_email', label: 'Send alert to', type: 'email', placeholder: 'you@example.com' },
+          { key: 'notify_email', label: 'Send alert to (press Enter to add)', type: 'tags', placeholder: 'you@example.com' },
         ],
-        summary: (f) => `Alerts ${f.notify_email || '…'} if "${f.file_name || '…'}" hasn't been updated in ${f.days || 'X'} days.`,
+        summary: (f) => {
+          const tos = Array.isArray(f.notify_email) ? f.notify_email : (f.notify_email ? [f.notify_email] : []);
+          return `Alerts ${tos.join(', ') || '…'} if "${f.file_name || '…'}" hasn't been updated in ${f.days || 'X'} days.`;
+        },
         schedule: 'Daily check',
       },
       {
@@ -267,7 +280,7 @@ const TEMPLATE_CATEGORIES = [
           { key: 'archive_folder', label: 'Archive destination folder', type: 'text', placeholder: 'e.g. Archive' },
           { key: 'days', label: 'Move after inactivity (days)', type: 'number', placeholder: '30' },
         ],
-        summary: (f) => `Files in "${f.source_folder || '…'}" not opened for ${f.days || '30'} days are moved to "${f.archive_folder || 'Archive'}".`,
+        summary: (f) => `Files in "${f.source_folder || '…'}" not opened for ${f.days || '30'} days moved to "${f.archive_folder || 'Archive'}".`,
         schedule: 'Weekly check',
       },
     ],
@@ -286,22 +299,13 @@ const TEMPLATE_CATEGORIES = [
           { key: 'sheet_name', label: 'Google Sheet name', type: 'text', placeholder: 'e.g. Sales Tracker' },
           { key: 'cell', label: 'Cell reference to monitor', type: 'text', placeholder: 'e.g. B12' },
           { key: 'threshold', label: 'Alert threshold value', type: 'number', placeholder: '1000' },
-          { key: 'notify_email', label: 'Send alert to', type: 'email', placeholder: 'you@example.com' },
+          { key: 'notify_email', label: 'Send alert to (press Enter to add)', type: 'tags', placeholder: 'you@example.com' },
         ],
-        summary: (f) => `Sends an alert to ${f.notify_email || '…'} when cell ${f.cell || '…'} in "${f.sheet_name || '…'}" exceeds ${f.threshold || 'X'}.`,
+        summary: (f) => {
+          const tos = Array.isArray(f.notify_email) ? f.notify_email : (f.notify_email ? [f.notify_email] : []);
+          return `Alerts ${tos.join(', ') || '…'} when cell ${f.cell || '…'} in "${f.sheet_name || '…'}" exceeds ${f.threshold || 'X'}.`;
+        },
         schedule: 'Hourly check',
-      },
-      {
-        id: 'sheets-form-populate',
-        name: 'Auto-populate sheet from Google Form responses',
-        desc: 'When a Form is submitted, append the response as a new row in a Sheet',
-        icon: '📝',
-        fields: [
-          { key: 'form_name', label: 'Google Form name', type: 'text', placeholder: 'e.g. Contact Form' },
-          { key: 'sheet_name', label: 'Destination Sheet name', type: 'text', placeholder: 'e.g. Form Responses' },
-        ],
-        summary: (f) => `When "${f.form_name || '…'}" is submitted, appends the response as a new row in "${f.sheet_name || '…'}".`,
-        schedule: 'On Form submission',
       },
       {
         id: 'sheets-report',
@@ -312,9 +316,12 @@ const TEMPLATE_CATEGORIES = [
           { key: 'sheet_name', label: 'Source Sheet name', type: 'text', placeholder: 'e.g. Weekly Metrics' },
           { key: 'frequency', label: 'Send frequency', type: 'select', options: ['Daily', 'Weekly (Monday)', 'Weekly (Friday)'] },
           { key: 'send_time', label: 'Send at', type: 'time', placeholder: '08:00' },
-          { key: 'recipients', label: 'Email recipients', type: 'text', placeholder: 'team@company.com' },
+          { key: 'recipients', label: 'Email recipients (press Enter to add each)', type: 'tags', placeholder: 'team@company.com' },
         ],
-        summary: (f) => `${f.frequency || 'Daily'} at ${f.send_time || '08:00'}, emails a report from "${f.sheet_name || '…'}" to ${f.recipients || '…'}.`,
+        summary: (f) => {
+          const tos = Array.isArray(f.recipients) ? f.recipients : (f.recipients ? [f.recipients] : []);
+          return `${f.frequency || 'Daily'} at ${f.send_time || '08:00'}, emails report from "${f.sheet_name || '…'}" to ${tos.join(', ') || '…'}.`;
+        },
         schedule: (f) => `${f.frequency || 'Daily'} at ${f.send_time || '08:00'}`,
       },
       {
@@ -324,9 +331,12 @@ const TEMPLATE_CATEGORIES = [
         icon: '🔔',
         fields: [
           { key: 'sheet_name', label: 'Google Sheet name', type: 'text', placeholder: 'e.g. Project Tracker' },
-          { key: 'notify_emails', label: 'Notify email(s)', type: 'text', placeholder: 'team@company.com' },
+          { key: 'notify_emails', label: 'Notify (press Enter to add each email)', type: 'tags', placeholder: 'team@company.com' },
         ],
-        summary: (f) => `Notifies ${f.notify_emails || '…'} whenever a row is updated in "${f.sheet_name || '…'}".`,
+        summary: (f) => {
+          const tos = Array.isArray(f.notify_emails) ? f.notify_emails : (f.notify_emails ? [f.notify_emails] : []);
+          return `Notifies ${tos.join(', ') || '…'} when a row is updated in "${f.sheet_name || '…'}".`;
+        },
         schedule: 'On Sheet edit',
       },
     ],
@@ -342,10 +352,13 @@ const TEMPLATE_CATEGORIES = [
         desc: 'When a keyword email arrives, add a task row to a Sheet or Google Tasks',
         icon: '✅',
         fields: [
-          { key: 'keyword', label: 'Email keyword to match', type: 'text', placeholder: 'e.g. action required' },
+          { key: 'keywords', label: 'Email keywords (press Enter to add each)', type: 'tags', placeholder: 'e.g. action required' },
           { key: 'sheet_name', label: 'Google Sheet name for tasks', type: 'text', placeholder: 'e.g. Task List' },
         ],
-        summary: (f) => `When an email with "${f.keyword || '…'}" arrives, appends a new task row to the "${f.sheet_name || '…'}" Sheet.`,
+        summary: (f) => {
+          const kws = Array.isArray(f.keywords) ? f.keywords : (f.keywords ? [f.keywords] : []);
+          return `When email with ${kws.length ? kws.map(k => `"${k}"`).join(' or ') : '…'} arrives, appends task to "${f.sheet_name || '…'}" Sheet.`;
+        },
         schedule: 'On new email',
       },
       {
@@ -361,30 +374,6 @@ const TEMPLATE_CATEGORIES = [
         schedule: 'Before each meeting',
       },
       {
-        id: 'cross-form-folder',
-        name: 'Form submitted → create Drive folder for that client',
-        desc: 'When a Google Form is submitted, create a named Drive folder for that client',
-        icon: '📂',
-        fields: [
-          { key: 'form_name', label: 'Google Form name', type: 'text', placeholder: 'e.g. New Client Onboarding' },
-          { key: 'parent_folder', label: 'Create folder inside', type: 'text', placeholder: 'e.g. Clients' },
-        ],
-        summary: (f) => `When "${f.form_name || '…'}" is submitted, creates a new client folder inside "${f.parent_folder || '…'}" on Drive.`,
-        schedule: 'On Form submission',
-      },
-      {
-        id: 'cross-external-share',
-        name: 'New Drive file shared externally → alert via email',
-        desc: 'Get alerted when any Drive file is shared outside your company domain',
-        icon: '🔒',
-        fields: [
-          { key: 'company_domain', label: 'Your company domain', type: 'text', placeholder: 'e.g. company.com' },
-          { key: 'notify_email', label: 'Send alert to', type: 'email', placeholder: 'admin@company.com' },
-        ],
-        summary: (f) => `Sends an alert to ${f.notify_email || '…'} whenever a Drive file is shared outside @${f.company_domain || '…'}.`,
-        schedule: 'On Drive share',
-      },
-      {
         id: 'cross-invoice-pipeline',
         name: 'Invoice received in Gmail → saved to Drive + logged in Sheet',
         desc: 'When an invoice email arrives, save the attachment to Drive and log it in a Sheet',
@@ -393,7 +382,7 @@ const TEMPLATE_CATEGORIES = [
           { key: 'drive_folder', label: 'Save attachments to Drive folder', type: 'text', placeholder: 'e.g. Invoices 2026' },
           { key: 'sheet_name', label: 'Log entries in Google Sheet', type: 'text', placeholder: 'e.g. Invoice Log' },
         ],
-        summary: (f) => `When an invoice email arrives, saves the attachment to "${f.drive_folder || '…'}" and logs a row in "${f.sheet_name || '…'}".`,
+        summary: (f) => `When invoice email arrives, saves attachment to "${f.drive_folder || '…'}" and logs to "${f.sheet_name || '…'}".`,
         schedule: 'On new email',
       },
       {
@@ -403,23 +392,98 @@ const TEMPLATE_CATEGORIES = [
         icon: '📊',
         fields: [
           { key: 'sheet_name', label: 'Source Sheet name', type: 'text', placeholder: 'e.g. KPI Dashboard' },
-          { key: 'recipients', label: 'Email recipients', type: 'text', placeholder: 'team@company.com' },
+          { key: 'recipients', label: 'Email recipients (press Enter to add each)', type: 'tags', placeholder: 'team@company.com' },
           { key: 'send_day', label: 'Send on', type: 'select', options: ['Monday', 'Friday', 'Sunday'] },
           { key: 'send_time', label: 'Send at', type: 'time', placeholder: '09:00' },
         ],
-        summary: (f) => `Every ${f.send_day || 'Friday'} at ${f.send_time || '09:00'}, emails a report from "${f.sheet_name || '…'}" to ${f.recipients || '…'}.`,
+        summary: (f) => {
+          const tos = Array.isArray(f.recipients) ? f.recipients : (f.recipients ? [f.recipients] : []);
+          return `Every ${f.send_day || 'Friday'} at ${f.send_time || '09:00'}, emails report from "${f.sheet_name || '…'}" to ${tos.join(', ') || '…'}.`;
+        },
         schedule: (f) => `Weekly on ${f.send_day || 'Friday'} at ${f.send_time || '09:00'}`,
       },
     ],
   },
 ];
 
+// ─── Tag Input Component ────────────────────────────────────────────────────
+
+function TagInput({ value, onChange, placeholder }) {
+  const tags = Array.isArray(value) ? value : (value ? [value] : []);
+  const [inputVal, setInputVal] = useState('');
+
+  const addTag = (raw) => {
+    const tag = raw.trim();
+    if (tag && !tags.includes(tag)) {
+      onChange([...tags, tag]);
+    }
+    setInputVal('');
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addTag(inputVal);
+    } else if (e.key === 'Backspace' && !inputVal && tags.length > 0) {
+      onChange(tags.slice(0, -1));
+    }
+  };
+
+  const removeTag = (idx) => onChange(tags.filter((_, i) => i !== idx));
+
+  return (
+    <div
+      style={{
+        display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center',
+        background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)',
+        borderRadius: '8px', padding: '8px 10px', minHeight: '42px', cursor: 'text',
+      }}
+      onClick={(e) => e.currentTarget.querySelector('input')?.focus()}
+    >
+      {tags.map((tag, i) => (
+        <span
+          key={i}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
+            background: 'rgba(99,102,241,0.15)', color: 'var(--accent-blue)',
+            borderRadius: '5px', padding: '2px 8px', fontSize: '0.8rem', fontWeight: 500,
+          }}
+        >
+          {tag}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); removeTag(i); }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--accent-blue)', padding: '0 2px', fontSize: '0.75rem', lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        value={inputVal}
+        onChange={(e) => setInputVal(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={() => { if (inputVal.trim()) addTag(inputVal); }}
+        placeholder={tags.length === 0 ? placeholder : 'Add more…'}
+        style={{
+          border: 'none', background: 'transparent', outline: 'none',
+          color: 'var(--text-primary)', fontSize: '0.88rem', minWidth: '120px', flex: 1,
+        }}
+      />
+    </div>
+  );
+}
+
 // ─── Template setup / edit modal ───────────────────────────────────────────
 
 function TemplateSetupModal({ template, onSave, onClose, initialValues = null }) {
   const isEdit = initialValues !== null;
   const [values, setValues] = useState(
-    () => initialValues || Object.fromEntries(template.fields.map((f) => [f.key, '']))
+    () => initialValues || Object.fromEntries(template.fields.map((f) => [f.key, f.type === 'tags' ? [] : '']))
   );
 
   const set = (key, val) => setValues((prev) => ({ ...prev, [key]: val }));
@@ -456,12 +520,17 @@ function TemplateSetupModal({ template, onSave, onClose, initialValues = null })
         </div>
 
         <div className={styles.setupModalBody}>
-          {/* Dynamic fields */}
           <div className={styles.setupFields}>
             {template.fields.map((field) => (
               <div key={field.key} className="input-group" style={{ marginBottom: 0 }}>
                 <label className="input-label">{field.label}</label>
-                {field.type === 'select' ? (
+                {field.type === 'tags' ? (
+                  <TagInput
+                    value={values[field.key]}
+                    onChange={(v) => set(field.key, v)}
+                    placeholder={field.placeholder}
+                  />
+                ) : field.type === 'select' ? (
                   <select
                     className="input"
                     value={values[field.key]}
@@ -494,7 +563,6 @@ function TemplateSetupModal({ template, onSave, onClose, initialValues = null })
             ))}
           </div>
 
-          {/* Live plain-English summary */}
           <div className={styles.summaryBox}>
             <div className={styles.summaryLabel}>What this automation will do</div>
             <p className={styles.summaryText}>{summary}</p>
@@ -530,38 +598,20 @@ function RequestAutomationModal({ userEmail, onClose, onSuccess }) {
   const [descError,  setDescError]  = useState(false);
 
   const handleSubmit = async () => {
-    if (!desc.trim()) {
-      setDescError(true);
-      return;
-    }
+    if (!desc.trim()) { setDescError(true); return; }
     setDescError(false);
     setSubmitting(true);
     setError(null);
-
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not authenticated');
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api/request-automation`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            title:       title.trim(),
-            description: desc.trim(),
-            trigger_app: triggerApp,
-            action_app:  actionApp,
-          }),
-        }
-      );
-
+      const res = await fetch(`${BACKEND()}/api/request-automation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ title: title.trim(), description: desc.trim(), trigger_app: triggerApp, action_app: actionApp }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Request failed');
-
       onSuccess();
     } catch (e) {
       setError(e.message);
@@ -574,35 +624,20 @@ function RequestAutomationModal({ userEmail, onClose, onSuccess }) {
     <div className={styles.modal} onClick={onClose}>
       <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
         <div className={styles.modalHeader}>
-          <h2>Request an Automation</h2>
+          <h2>Request a Custom Automation</h2>
           <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
         </div>
-
         <div className={styles.modalBody}>
-          {/* Requester */}
           <div className="input-group" style={{ marginBottom: 0 }}>
             <label className="input-label">Your Email</label>
-            <input className="input" type="email" value={userEmail} readOnly
-              style={{ opacity: 0.6, cursor: 'default' }} />
+            <input className="input" type="email" value={userEmail} readOnly style={{ opacity: 0.6, cursor: 'default' }} />
           </div>
-
-          {/* Title */}
           <div className="input-group" style={{ marginBottom: 0 }}>
             <label className="input-label">Automation Title</label>
-            <input
-              className="input"
-              type="text"
-              placeholder="e.g. Auto-archive invoices weekly"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
+            <input className="input" type="text" placeholder="e.g. Auto-archive invoices weekly" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
-
-          {/* Description — required */}
           <div className="input-group" style={{ marginBottom: 0 }}>
-            <label className="input-label">
-              Description <span style={{ color: '#ef4444' }}>*</span>
-            </label>
+            <label className="input-label">Description <span style={{ color: '#ef4444' }}>*</span></label>
             <textarea
               className={`input ${styles.ruleTextarea}`}
               placeholder="Describe what you need this automation to do…"
@@ -611,68 +646,35 @@ function RequestAutomationModal({ userEmail, onClose, onSuccess }) {
               rows={4}
               style={descError ? { borderColor: '#ef4444' } : undefined}
             />
-            {descError && (
-              <p style={{ color: '#ef4444', fontSize: '0.78rem', marginTop: '4px' }}>
-                Description is required.
-              </p>
-            )}
+            {descError && <p style={{ color: '#ef4444', fontSize: '0.78rem', marginTop: '4px' }}>Description is required.</p>}
           </div>
-
-          {/* Trigger / Action apps */}
           <div className={styles.requestFormGrid}>
             <div className="input-group" style={{ marginBottom: 0 }}>
               <label className="input-label">Trigger App (optional)</label>
-              <select
-                className="input"
-                value={triggerApp}
-                onChange={(e) => setTriggerApp(e.target.value)}
-                style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
-              >
+              <select className="input" value={triggerApp} onChange={(e) => setTriggerApp(e.target.value)} style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
                 <option value="">— select —</option>
                 {APPS.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
             <div className="input-group" style={{ marginBottom: 0 }}>
               <label className="input-label">Action App (optional)</label>
-              <select
-                className="input"
-                value={actionApp}
-                onChange={(e) => setActionApp(e.target.value)}
-                style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
-              >
+              <select className="input" value={actionApp} onChange={(e) => setActionApp(e.target.value)} style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
                 <option value="">— select —</option>
                 {APPS.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
           </div>
-
-          {/* Error */}
           {error && (
-            <div style={{
-              padding: '10px 14px',
-              background: 'rgba(239, 68, 68, 0.08)',
-              border: '1px solid rgba(239, 68, 68, 0.2)',
-              borderRadius: '8px',
-              fontSize: '0.82rem',
-              color: '#ef4444',
-            }}>
+            <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', fontSize: '0.82rem', color: '#ef4444' }}>
               ✗ {error}
             </div>
           )}
-
           <div className={styles.modalActions}>
-            <button
-              className="btn btn-primary"
-              onClick={handleSubmit}
-              disabled={submitting}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-            >
+            <button className="btn btn-primary" onClick={handleSubmit} disabled={submitting} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               {submitting && <span className={styles.spinnerSm} />}
               {submitting ? 'Sending…' : 'Submit Request'}
             </button>
-            <button className="btn btn-secondary" onClick={onClose} disabled={submitting}>
-              Cancel
-            </button>
+            <button className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
           </div>
         </div>
       </div>
@@ -680,38 +682,93 @@ function RequestAutomationModal({ userEmail, onClose, onSuccess }) {
   );
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function formatLastRun(last_run_at) {
+  if (!last_run_at) return 'Never';
+  try {
+    const d = new Date(last_run_at);
+    const now = new Date();
+    const diffMs = now - d;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return `${diffH}h ago`;
+    return d.toLocaleDateString();
+  } catch {
+    return 'Never';
+  }
+}
+
+function dbToUi(row) {
+  return {
+    id:             row.id,
+    name:           row.name,
+    description:    row.description || '',
+    schedule:       row.schedule || '',
+    templateId:     row.template_id,
+    fieldValues:    row.field_values || {},
+    active:         row.is_active,
+    lastRun:        formatLastRun(row.last_run_at),
+    runs:           row.run_count || 0,
+    itemsProcessed: row.items_processed || 0,
+  };
+}
+
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 export default function AutomationsPage() {
-  const [automations, setAutomations] = useState([]);
-  const [activeTab, setActiveTab] = useState('automations');
-  const [setupTemplate, setSetupTemplate] = useState(null);
-  const [editingAutomation, setEditingAutomation] = useState(null); // {automation, template}
-  const [logs, setLogs] = useState([]);
-  const [testingId, setTestingId] = useState(null);
-  const [testResults, setTestResults] = useState({}); // {id: {ok, message}}
-
-  // Request Automation modal + toast
-  const [requestModalOpen, setRequestModalOpen] = useState(false);
-  const [userEmail, setUserEmail] = useState('');
-  const [toast, setToast] = useState(null); // {message, error?}
+  const [automations,       setAutomations]       = useState([]);
+  const [loading,           setLoading]           = useState(true);
+  const [activeTab,         setActiveTab]         = useState('automations');
+  const [setupTemplate,     setSetupTemplate]     = useState(null);
+  const [editingAutomation, setEditingAutomation] = useState(null);
+  const [logs,              setLogs]              = useState([]);
+  const [testingId,         setTestingId]         = useState(null);
+  const [testResults,       setTestResults]       = useState({});
+  const [requestModalOpen,  setRequestModalOpen]  = useState(false);
+  const [userEmail,         setUserEmail]         = useState('');
+  const [toast,             setToast]             = useState(null);
   const { plan: userPlan, openUpgrade } = usePlan();
 
-  // Automation limits per plan
   const getAutomationLimit = (plan) => {
     if (plan === 'pro_plus') return Infinity;
     if (['pro', 'trialing', 'pro_trial', 'active'].includes(plan)) return 5;
-    return 0; // free
+    return 0;
   };
 
-  // Load user email (plan comes from PlanContext)
+  const getToken = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+    return session.access_token;
+  }, []);
+
+  // Load automations from DB on mount
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email) setUserEmail(session.user.email);
     });
-  }, []);
 
-  // Auto-dismiss toast after 4 s
+    (async () => {
+      try {
+        const token = await getToken();
+        const res = await fetch(`${BACKEND()}/api/automations`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const rows = await res.json();
+          setAutomations(rows.map(dbToUi));
+        }
+      } catch {
+        // silent — user sees empty state
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [getToken]);
+
+  // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 4000);
@@ -720,41 +777,62 @@ export default function AutomationsPage() {
 
   // ── Handlers ───────────────────────────────────────────────────────────
 
-  const handleSaveAutomation = (data) => {
+  const handleSaveAutomation = async (data) => {
     const limit = getAutomationLimit(userPlan);
     if (automations.length >= limit) {
       setSetupTemplate(null);
-      if (limit === 0) {
-        openUpgrade();
-      } else {
-        setToast({ message: `You've reached the ${limit}-automation limit on Pro. Upgrade to Pro Plus for unlimited.`, error: true });
-      }
+      if (limit === 0) { openUpgrade(); }
+      else { setToast({ message: `You've reached the ${limit}-automation limit on Pro. Upgrade to Pro Plus for unlimited.`, error: true }); }
       return;
     }
-    const newAuto = {
-      id: Date.now(),
-      ...data,
-      active: true,
-      lastRun: 'Never',
-      runs: 0,
-      itemsProcessed: 0,
-    };
-    setAutomations((prev) => [newAuto, ...prev]);
-    setLogs((prev) => [{ name: data.name, time: 'Just created', status: 'success', items: 0 }, ...prev]);
-    setSetupTemplate(null);
-    setActiveTab('automations');
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BACKEND()}/api/automations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          template_id:  data.templateId,
+          name:         data.name,
+          description:  data.description,
+          schedule:     data.schedule,
+          field_values: data.fieldValues,
+        }),
+      });
+      const row = await res.json();
+      if (!res.ok) throw new Error(row.detail || 'Failed to save');
+      setAutomations((prev) => [dbToUi(row), ...prev]);
+      setLogs((prev) => [{ name: data.name, time: 'Just created', status: 'success', items: 0 }, ...prev]);
+      setSetupTemplate(null);
+      setActiveTab('automations');
+      setToast({ message: 'Automation saved and is now active.' });
+    } catch (e) {
+      setToast({ message: e.message, error: true });
+    }
   };
 
-  const handleSaveEdit = (data) => {
+  const handleSaveEdit = async (data) => {
     const id = editingAutomation.automation.id;
-    setAutomations((prev) =>
-      prev.map((a) =>
-        a.id === id
-          ? { ...a, name: data.name, description: data.description, schedule: data.schedule, templateId: data.templateId, fieldValues: data.fieldValues }
-          : a
-      )
-    );
-    setEditingAutomation(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BACKEND()}/api/automations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name:         data.name,
+          description:  data.description,
+          schedule:     data.schedule,
+          field_values: data.fieldValues,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to update');
+      setAutomations((prev) =>
+        prev.map((a) => a.id === id ? { ...a, name: data.name, description: data.description, schedule: data.schedule, templateId: data.templateId, fieldValues: data.fieldValues } : a)
+      );
+      setEditingAutomation(null);
+      setToast({ message: 'Automation updated.' });
+    } catch (e) {
+      setToast({ message: e.message, error: true });
+    }
   };
 
   const handleEdit = (auto) => {
@@ -763,63 +841,62 @@ export default function AutomationsPage() {
     if (template) setEditingAutomation({ automation: auto, template });
   };
 
+  const toggleActive = async (auto) => {
+    const newVal = !auto.active;
+    // Optimistic update
+    setAutomations((prev) => prev.map((a) => a.id === auto.id ? { ...a, active: newVal } : a));
+    try {
+      const token = await getToken();
+      await fetch(`${BACKEND()}/api/automations/${auto.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ is_active: newVal }),
+      });
+    } catch {
+      // Revert on error
+      setAutomations((prev) => prev.map((a) => a.id === auto.id ? { ...a, active: auto.active } : a));
+    }
+  };
+
+  const deleteAutomation = async (auto) => {
+    setAutomations((prev) => prev.filter((a) => a.id !== auto.id));
+    try {
+      const token = await getToken();
+      await fetch(`${BACKEND()}/api/automations/${auto.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      setAutomations((prev) => [auto, ...prev]);
+      setToast({ message: 'Failed to delete automation.', error: true });
+    }
+  };
+
   const testRunAutomation = async (auto) => {
     setTestingId(auto.id);
     setTestResults((prev) => ({ ...prev, [auto.id]: null }));
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not authenticated');
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api/command`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ command: auto.description }),
-        }
-      );
+      const token = await getToken();
+      const res = await fetch(`${BACKEND()}/api/automations/${auto.id}/run`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Test run failed');
 
-      let msg;
-      if (data.needs_disambiguation) {
-        msg = 'Needs clarification — use the Command Bar to run this manually';
-      } else if (data.result) {
-        const r = data.result;
-        if (r.emails) msg = `Found ${r.emails.length} email(s)`;
-        else if (r.events) msg = `Created/found ${r.events.length} event(s)`;
-        else if (r.files) msg = `Found ${r.files.length} file(s)`;
-        else if (r.message_id) msg = 'Email sent successfully';
-        else if (r.archived) msg = 'Email archived';
-        else msg = 'Executed successfully';
-      } else {
-        msg = 'Executed successfully';
-      }
+      const status  = data.status || 'success';
+      const message = data.message || 'Executed successfully';
+      const items   = data.items || 0;
 
-      setTestResults((prev) => ({ ...prev, [auto.id]: { ok: true, message: msg } }));
-      setAutomations((prev) =>
-        prev.map((a) => a.id === auto.id ? { ...a, runs: (a.runs || 0) + 1, lastRun: 'Just now' } : a)
-      );
-      setLogs((prev) => [{ name: auto.name, time: 'Just now', status: 'success', items: 1 }, ...prev]);
+      setTestResults((prev) => ({ ...prev, [auto.id]: { ok: status !== 'error', message: `${message} (${items} item${items !== 1 ? 's' : ''})` } }));
+      setAutomations((prev) => prev.map((a) => a.id === auto.id ? { ...a, runs: (a.runs || 0) + 1, lastRun: 'Just now', itemsProcessed: (a.itemsProcessed || 0) + items } : a));
+      setLogs((prev) => [{ name: auto.name, time: 'Just now', status, items }, ...prev]);
     } catch (err) {
       setTestResults((prev) => ({ ...prev, [auto.id]: { ok: false, message: err.message } }));
-      setLogs((prev) => [{ name: auto.name, time: 'Just now', status: 'partial', items: 0 }, ...prev]);
+      setLogs((prev) => [{ name: auto.name, time: 'Just now', status: 'error', items: 0 }, ...prev]);
     } finally {
       setTestingId(null);
     }
-  };
-
-  const toggleActive = (id) => {
-    setAutomations((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, active: !a.active } : a))
-    );
-  };
-
-  const deleteAutomation = (id) => {
-    setAutomations((prev) => prev.filter((a) => a.id !== id));
   };
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -838,13 +915,9 @@ export default function AutomationsPage() {
             Automations require Pro
           </h3>
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
-            Create rules that automatically archive emails, label messages, send follow-ups, and more — running on schedule without any manual work.
+            Create rules that automatically archive emails, label messages, send follow-ups, and more — running 24/7 without any manual work.
           </p>
-          <button
-            className="btn btn-primary"
-            style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px' }}
-            onClick={openUpgrade}
-          >
+          <button className="btn btn-primary" style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px' }} onClick={openUpgrade}>
             View Plans →
           </button>
         </div>
@@ -857,14 +930,9 @@ export default function AutomationsPage() {
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h1>Automations</h1>
-          <p>Set-and-forget automations that run on schedule.</p>
+          <p>Set-and-forget automations that run 24/7 on schedule.</p>
           {(() => {
             const limit = getAutomationLimit(userPlan);
-            if (limit === 0) return (
-              <p style={{ color: '#f59e0b', fontSize: '0.8rem', marginTop: '4px' }}>
-                ⚠️ Automations require a Pro plan. <a href="/pricing" style={{ color: 'var(--accent-blue)' }}>Upgrade →</a>
-              </p>
-            );
             if (limit !== Infinity) return (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>
                 {automations.length}/{limit} automations used
@@ -876,29 +944,25 @@ export default function AutomationsPage() {
             return null;
           })()}
         </div>
-        <button className="btn btn-primary" onClick={() => setRequestModalOpen(true)}>
-          + New Automation
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => setRequestModalOpen(true)}>
+            Request Custom
+          </button>
+          <button className="btn btn-primary" onClick={() => setActiveTab('templates')}>
+            + New Automation
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
       <div className={styles.tabs}>
-        <button
-          className={`${styles.tab} ${activeTab === 'automations' ? styles.tabActive : ''}`}
-          onClick={() => setActiveTab('automations')}
-        >
+        <button className={`${styles.tab} ${activeTab === 'automations' ? styles.tabActive : ''}`} onClick={() => setActiveTab('automations')}>
           My Automations ({automations.length})
         </button>
-        <button
-          className={`${styles.tab} ${activeTab === 'templates' ? styles.tabActive : ''}`}
-          onClick={() => setActiveTab('templates')}
-        >
+        <button className={`${styles.tab} ${activeTab === 'templates' ? styles.tabActive : ''}`} onClick={() => setActiveTab('templates')}>
           Templates
         </button>
-        <button
-          className={`${styles.tab} ${activeTab === 'logs' ? styles.tabActive : ''}`}
-          onClick={() => setActiveTab('logs')}
-        >
+        <button className={`${styles.tab} ${activeTab === 'logs' ? styles.tabActive : ''}`} onClick={() => setActiveTab('logs')}>
           Execution Log
         </button>
       </div>
@@ -906,91 +970,76 @@ export default function AutomationsPage() {
       {/* My Automations Tab */}
       {activeTab === 'automations' && (
         <div className={styles.rulesList}>
-          {automations.length === 0 && (
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '48px 24px', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '12px' }}>⏳</div>
+              <p>Loading automations…</p>
+            </div>
+          ) : automations.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '48px 24px', color: 'var(--text-muted)' }}>
               <div style={{ fontSize: '2rem', marginBottom: '12px' }}>🔄</div>
               <p style={{ marginBottom: '16px' }}>No automations yet. Browse Templates to get started.</p>
-              <button className="btn btn-primary" onClick={() => setActiveTab('templates')}>
-                Browse Templates
-              </button>
+              <button className="btn btn-primary" onClick={() => setActiveTab('templates')}>Browse Templates</button>
             </div>
-          )}
-          {automations.map((auto) => (
-            <div key={auto.id} className={styles.ruleCard}>
-              <div className={styles.ruleHeader}>
-                <div className={styles.ruleInfo}>
-                  <h3 className={styles.ruleName}>{auto.name}</h3>
-                  <p className={styles.ruleDesc}>{auto.description}</p>
+          ) : (
+            automations.map((auto) => (
+              <div key={auto.id} className={styles.ruleCard}>
+                <div className={styles.ruleHeader}>
+                  <div className={styles.ruleInfo}>
+                    <h3 className={styles.ruleName}>{auto.name}</h3>
+                    <p className={styles.ruleDesc}>{auto.description}</p>
+                  </div>
+                  <div
+                    className={`toggle ${auto.active ? 'active' : ''}`}
+                    onClick={() => toggleActive(auto)}
+                    style={{ cursor: 'pointer', flexShrink: 0 }}
+                  />
                 </div>
-                <div
-                  className={`toggle ${auto.active ? 'active' : ''}`}
-                  onClick={() => toggleActive(auto.id)}
-                  style={{ cursor: 'pointer' }}
-                />
-              </div>
-              <div className={styles.ruleMeta}>
-                <span className={styles.ruleMetaItem}>📅 {auto.schedule}</span>
-                <span className={styles.ruleMetaItem}>🕐 Last: {auto.lastRun}</span>
-                <span className={styles.ruleMetaItem}>🔄 {auto.runs} runs</span>
-                <span className={styles.ruleMetaItem}>📦 {auto.itemsProcessed} items</span>
-              </div>
+                <div className={styles.ruleMeta}>
+                  <span className={styles.ruleMetaItem}>📅 {auto.schedule}</span>
+                  <span className={styles.ruleMetaItem}>🕐 Last: {auto.lastRun}</span>
+                  <span className={styles.ruleMetaItem}>🔄 {auto.runs} runs</span>
+                  <span className={styles.ruleMetaItem}>📦 {auto.itemsProcessed} items</span>
+                  <span className={styles.ruleMetaItem} style={{ color: auto.active ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+                    {auto.active ? '● Active' : '○ Paused'}
+                  </span>
+                </div>
 
-              {/* Test Run result */}
-              {testResults[auto.id] && (
-                <div
-                  style={{
-                    padding: '9px 12px',
-                    marginBottom: '8px',
-                    borderRadius: '8px',
-                    background: testResults[auto.id].ok
-                      ? 'rgba(52, 211, 153, 0.08)'
-                      : 'rgba(239, 68, 68, 0.08)',
-                    border: `1px solid ${testResults[auto.id].ok
-                      ? 'rgba(52, 211, 153, 0.2)'
-                      : 'rgba(239, 68, 68, 0.2)'}`,
+                {testResults[auto.id] && (
+                  <div style={{
+                    padding: '9px 12px', marginBottom: '8px', borderRadius: '8px',
+                    background: testResults[auto.id].ok ? 'rgba(52,211,153,0.08)' : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${testResults[auto.id].ok ? 'rgba(52,211,153,0.2)' : 'rgba(239,68,68,0.2)'}`,
                     fontSize: '0.8rem',
                     color: testResults[auto.id].ok ? 'var(--accent-green)' : '#ef4444',
-                  }}
-                >
-                  {testResults[auto.id].ok ? '✓ ' : '✗ '}
-                  {testResults[auto.id].message}
-                </div>
-              )}
+                  }}>
+                    {testResults[auto.id].ok ? '✓ ' : '✗ '}{testResults[auto.id].message}
+                  </div>
+                )}
 
-              <div className={styles.ruleActions}>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => handleEdit(auto)}
-                  disabled={!auto.templateId}
-                  title={!auto.templateId ? 'No template data available for this automation' : undefined}
-                >
-                  Edit
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => testRunAutomation(auto)}
-                  disabled={testingId === auto.id}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                >
-                  {testingId === auto.id ? (
-                    <>
-                      <span className={styles.spinnerSm} />
-                      Running…
-                    </>
-                  ) : (
-                    'Test Run'
-                  )}
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ color: 'var(--accent-red)' }}
-                  onClick={() => deleteAutomation(auto.id)}
-                >
-                  Delete
-                </button>
+                <div className={styles.ruleActions}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(auto)} disabled={!auto.templateId}>
+                    Edit
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => testRunAutomation(auto)}
+                    disabled={testingId === auto.id}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    {testingId === auto.id ? <><span className={styles.spinnerSm} />Running…</> : 'Test Run'}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ color: 'var(--accent-red)' }}
+                    onClick={() => deleteAutomation(auto)}
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       )}
 
@@ -1028,28 +1077,29 @@ export default function AutomationsPage() {
       {/* Execution Log Tab */}
       {activeTab === 'logs' && (
         <div className={styles.logsList}>
-          {logs.length === 0 && (
+          {logs.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '48px 24px', color: 'var(--text-muted)' }}>
               <div style={{ fontSize: '2rem', marginBottom: '12px' }}>📋</div>
-              <p>No execution history yet.</p>
+              <p>No execution history yet. Run a Test Run to see results here.</p>
             </div>
+          ) : (
+            logs.map((log, idx) => (
+              <div key={idx} className={styles.logItem}>
+                <div className={`${styles.logStatus} ${styles[log.status]}`}>
+                  {log.status === 'success' ? '✓' : log.status === 'skipped' ? '–' : '⚠'}
+                </div>
+                <div className={styles.logContent}>
+                  <span className={styles.logRule}>{log.name}</span>
+                  <span className={styles.logTime}>{log.time}</span>
+                </div>
+                <span className={styles.logItems}>{log.items} item{log.items !== 1 ? 's' : ''}</span>
+              </div>
+            ))
           )}
-          {logs.map((log, idx) => (
-            <div key={idx} className={styles.logItem}>
-              <div className={`${styles.logStatus} ${styles[log.status]}`}>
-                {log.status === 'success' ? '✓' : '⚠'}
-              </div>
-              <div className={styles.logContent}>
-                <span className={styles.logRule}>{log.name}</span>
-                <span className={styles.logTime}>{log.time}</span>
-              </div>
-              <span className={styles.logItems}>{log.items} item{log.items !== 1 ? 's' : ''}</span>
-            </div>
-          ))}
         </div>
       )}
 
-      {/* New automation modal */}
+      {/* Setup modal */}
       {setupTemplate && (
         <TemplateSetupModal
           template={setupTemplate}
