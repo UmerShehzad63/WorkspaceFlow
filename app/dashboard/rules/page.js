@@ -744,29 +744,58 @@ export default function AutomationsPage() {
     return session.access_token;
   }, []);
 
-  // Load automations from DB on mount
+  // Load automations — called once we have a confirmed session
+  const loadAutomations = useCallback(async (token) => {
+    try {
+      const res = await fetch(`${BACKEND()}/api/automations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        setAutomations(rows.map(dbToUi));
+      }
+    } catch {
+      // silent — user sees empty state
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // On mount: wait for Supabase to restore the session, then load.
+  // Using onAuthStateChange ensures this works even after a hard page reload
+  // where the session token is restored from localStorage asynchronously.
   useEffect(() => {
+    let loaded = false;
+
+    // Try immediately (works if session is already in memory)
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user?.email) setUserEmail(session.user.email);
+      if (session) {
+        if (session.user?.email) setUserEmail(session.user.email);
+        if (!loaded) {
+          loaded = true;
+          loadAutomations(session.access_token);
+        }
+      }
     });
 
-    (async () => {
-      try {
-        const token = await getToken();
-        const res = await fetch(`${BACKEND()}/api/automations`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const rows = await res.json();
-          setAutomations(rows.map(dbToUi));
+    // Also listen for auth state change — fires when Supabase restores the
+    // session from storage after a page reload (INITIAL_SESSION event)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        if (session.user?.email) setUserEmail(session.user.email);
+        if (!loaded) {
+          loaded = true;
+          loadAutomations(session.access_token);
         }
-      } catch {
-        // silent — user sees empty state
-      } finally {
+      } else {
+        // Signed out — clear state
+        setAutomations([]);
         setLoading(false);
       }
-    })();
-  }, [getToken]);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [loadAutomations]);
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -805,6 +834,13 @@ export default function AutomationsPage() {
       setSetupTemplate(null);
       setActiveTab('automations');
       setToast({ message: 'Automation saved and is now active.' });
+      // Register Gmail push watch so "on new email" automations fire in real-time
+      if ((data.schedule || '').toLowerCase().includes('on new email')) {
+        fetch(`${BACKEND()}/api/gmail/watch`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});  // best-effort, non-blocking
+      }
     } catch (e) {
       setToast({ message: e.message, error: true });
     }

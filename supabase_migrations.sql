@@ -51,7 +51,11 @@ EXCEPTION WHEN duplicate_object THEN
   NULL;
 END $$;
 
--- ── 5. Automations ──────────────────────────────────────────────────────────
+-- ── 5. Gmail push notification tracking ────────────────────────────────────
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gmail_history_id   TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gmail_watch_expiry TIMESTAMPTZ;
+
+-- ── 6. Automations ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS automations (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id          UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,

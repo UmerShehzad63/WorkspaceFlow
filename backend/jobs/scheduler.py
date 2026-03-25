@@ -409,6 +409,15 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=60,
     )
+    # Renew Gmail push watches that expire within 24 hours (watches last 7 days)
+    from jobs.gmail_push import renew_expiring_watches
+    scheduler.add_job(
+        renew_expiring_watches,
+        CronTrigger(hour=3, minute=0),  # 03:00 UTC daily
+        id="renew_gmail_watches",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
     scheduler.start()
     job_count = len(scheduler.get_jobs())
     logger.info("[Scheduler] Started — %d job(s) registered, checking every 5 minutes", job_count)

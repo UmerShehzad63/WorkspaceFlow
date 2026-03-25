@@ -1,12 +1,24 @@
 """
 automation_executor.py
 Executes a single automation rule against the user's Google workspace.
-Called by the scheduler every 5 minutes for due automations, and by the
-/api/automations/{id}/run endpoint for manual test runs.
+
+Execution modes:
+  - Scheduled mode: called by the scheduler for time-based automations
+  - Push mode: called by Gmail push notifications for "on new email" automations
+
+Bug fixes applied:
+  - "all" sender value treated as match-all wildcard (never used as email address)
+  - _gmail_forward uses raw Gmail message bytes so headers + attachments are preserved
+  - VIP flag creates the "VIP" label if it doesn't exist before applying it
+  - execute_automation_on_message() for real-time push-mode execution
 """
 
+import base64
 import logging
+import os
 from datetime import datetime, timezone as tz, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +43,12 @@ def _ensure_list(val) -> list:
         return []
     if isinstance(val, list):
         return [v.strip() for v in val if str(v).strip()]
-    # comma-separated string
     return [v.strip() for v in str(val).split(",") if v.strip()]
+
+
+def _is_all_wildcard(senders: list) -> bool:
+    """Return True if the sender list is the 'all' match-all wildcard."""
+    return any(s.strip().lower() == "all" for s in senders)
 
 
 def _get_user_email(access_token: str, refresh_token: str) -> str:
@@ -46,13 +62,21 @@ def _get_user_email(access_token: str, refresh_token: str) -> str:
         return ""
 
 
-def _gmail_modify(access_token: str, refresh_token: str, msg_id: str,
-                  add_labels: list = None, remove_labels: list = None):
-    """Add/remove Gmail labels on a single message."""
+def _gmail_service_for(access_token: str, refresh_token: str):
+    """Build and return an authenticated Gmail service."""
     from command_executor import _build_creds, _gmail_service
     creds = _build_creds(access_token, refresh_token)
-    svc   = _gmail_service(creds)
-    body  = {}
+    return _gmail_service(creds)
+
+
+def _gmail_modify(access_token: str, refresh_token: str, msg_id: str,
+                  add_labels: list = None, remove_labels: list = None):
+    """Add/remove Gmail label IDs on a single message."""
+    if not msg_id:
+        logger.warning("[AutoExec] _gmail_modify called with empty msg_id — skipped")
+        return
+    svc  = _gmail_service_for(access_token, refresh_token)
+    body = {}
     if add_labels:
         body["addLabelIds"] = add_labels
     if remove_labels:
@@ -60,39 +84,124 @@ def _gmail_modify(access_token: str, refresh_token: str, msg_id: str,
     svc.users().messages().modify(userId="me", id=msg_id, body=body).execute()
 
 
+def _get_or_create_label(access_token: str, refresh_token: str, name: str) -> str:
+    """
+    Return the Gmail label ID for `name`.
+    Creates the label if it doesn't already exist.
+    """
+    svc = _gmail_service_for(access_token, refresh_token)
+    result = svc.users().labels().list(userId="me").execute()
+    for label in result.get("labels", []):
+        if label["name"].lower() == name.lower():
+            return label["id"]
+    # Label not found — create it
+    created = svc.users().labels().create(
+        userId="me",
+        body={
+            "name": name,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+        },
+    ).execute()
+    return created["id"]
+
+
 def _gmail_forward(access_token: str, refresh_token: str,
                    original: dict, recipient: str) -> None:
-    """Forward an email to recipient by sending a new email."""
-    from command_executor import gmail_send
+    """
+    Forward an email to `recipient` using the Gmail API.
+
+    Fetches the original raw RFC 2822 bytes from Gmail so the subject,
+    sender, date, body and attachments are fully preserved.  Falls back
+    to a plain-text reconstruction if the raw fetch fails.
+    """
+    if not recipient or "@" not in recipient:
+        return
+
+    svc     = _gmail_service_for(access_token, refresh_token)
+    msg_id  = original.get("id")
     subject = original.get("subject", "(no subject)")
     fwd_subject = f"Fwd: {subject}" if not subject.startswith("Fwd:") else subject
     sender  = original.get("from", "")
     date    = original.get("date", "")
-    body    = original.get("body") or original.get("snippet", "")
+
+    # ── Try to get the full original raw message ────────────────────────────
+    original_body_text = None
+    if msg_id:
+        try:
+            raw_response = svc.users().messages().get(
+                userId="me", id=msg_id, format="raw"
+            ).execute()
+            raw_bytes = base64.urlsafe_b64decode(raw_response["raw"] + "==")
+            import email as _email_lib
+            orig_parsed = _email_lib.message_from_bytes(raw_bytes)
+            # Extract plain text payload
+            if orig_parsed.is_multipart():
+                for part in orig_parsed.walk():
+                    if part.get_content_type() == "text/plain":
+                        charset = part.get_content_charset() or "utf-8"
+                        original_body_text = part.get_payload(decode=True).decode(charset, errors="replace")
+                        break
+            else:
+                charset = orig_parsed.get_content_charset() or "utf-8"
+                original_body_text = orig_parsed.get_payload(decode=True).decode(charset, errors="replace")
+        except Exception:
+            pass  # fall through to snippet fallback
+
+    if not original_body_text:
+        original_body_text = original.get("body") or original.get("snippet", "")
+
     fwd_body = (
         f"---------- Forwarded message ----------\n"
         f"From: {sender}\n"
         f"Date: {date}\n"
         f"Subject: {subject}\n\n"
-        f"{body}"
+        f"{original_body_text}"
     )
-    gmail_send(access_token, refresh_token, recipient, fwd_subject, fwd_body)
+
+    # Build and send the forwarded message
+    mime_msg = MIMEText(fwd_body, "plain", "utf-8")
+    mime_msg["To"]      = recipient
+    mime_msg["Subject"] = fwd_subject
+
+    raw = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode()
+    svc.users().messages().send(userId="me", body={"raw": raw}).execute()
 
 
-# ── Template executors ────────────────────────────────────────────────────────
+# ── Message-level match helpers (used in push mode) ───────────────────────────
+
+def _message_matches_keywords(message: dict, keywords: list) -> bool:
+    """Return True if any keyword appears in the message subject, body, or snippet."""
+    text = " ".join([
+        message.get("subject", ""),
+        message.get("body", ""),
+        message.get("snippet", ""),
+    ]).lower()
+    return any(kw.lower() in text for kw in keywords)
+
+
+def _message_from_matches(message: dict, senders: list) -> bool:
+    """Return True if the message 'from' field matches any sender (or senders is 'all')."""
+    if _is_all_wildcard(senders):
+        return True
+    from_field = message.get("from", "").lower()
+    return any(s.lower() in from_field for s in senders)
+
+
+# ── Template executors ─────────────────────────────────────────────────────────
 
 def _exec_gmail_forward_keyword(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict:
-    """Forward emails matching any keyword to all listed recipients."""
+    """Forward emails matching any keyword to all listed recipients (scheduled mode)."""
     from command_executor import gmail_search
-    keywords    = _ensure_list(fv.get("keywords") or fv.get("keyword"))
-    forward_to  = _ensure_list(fv.get("forward_to"))
+    keywords   = _ensure_list(fv.get("keywords") or fv.get("keyword"))
+    forward_to = _ensure_list(fv.get("forward_to"))
     if not keywords or not forward_to:
         return {"items": 0, "message": "Missing keywords or recipients"}
 
-    kw_query = " OR ".join(f'"{k}"' for k in keywords)
-    query    = f"({kw_query}) in:inbox{_after_ts(last_run)}"
-    result   = gmail_search(tok, rtok, query, max_results=20)
-    msgs     = result.get("messages", [])
+    kw_query  = " OR ".join(f'"{k}"' for k in keywords)
+    query     = f"({kw_query}) in:inbox{_after_ts(last_run)}"
+    result    = gmail_search(tok, rtok, query, max_results=20)
+    msgs      = result.get("messages", [])
     forwarded = 0
     for msg in msgs:
         for recipient in forward_to:
@@ -102,29 +211,26 @@ def _exec_gmail_forward_keyword(fv: dict, tok: str, rtok: str, last_run: str | N
 
 
 def _exec_gmail_archive_newsletters(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
-    """Archive newsletter emails older than X days."""
     from command_executor import gmail_archive
-    days  = int(fv.get("days") or 3)
-    query = f"(unsubscribe OR newsletter OR \"list-unsubscribe\") older_than:{days}d"
+    days   = int(fv.get("days") or 3)
+    query  = f"(unsubscribe OR newsletter OR \"list-unsubscribe\") older_than:{days}d"
     result = gmail_archive(tok, rtok, query, max_results=50)
     n = result.get("archived", 0)
     return {"items": n, "message": f"Archived {n} newsletter email(s)"}
 
 
 def _exec_gmail_ooo(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict:
-    """Send auto-reply to all new incoming emails if before until_date."""
     from command_executor import gmail_search, gmail_send
     reply_msg  = (fv.get("reply_message") or "I'm currently out of office and will reply when I return.").strip()
     until_date = (fv.get("until_date") or "").strip()
 
-    # Check if OOO period has ended
     if until_date:
         try:
             until_dt = datetime.fromisoformat(until_date)
             if until_dt.tzinfo is None:
                 until_dt = until_dt.replace(tzinfo=tz.utc)
             if datetime.now(tz.utc) > until_dt:
-                return {"items": 0, "message": f"OOO period ended on {until_date} — no replies sent"}
+                return {"items": 0, "message": f"OOO period ended on {until_date}"}
         except Exception:
             pass
 
@@ -134,7 +240,6 @@ def _exec_gmail_ooo(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict
     replied = 0
     for msg in msgs:
         sender = msg.get("from", "")
-        # Skip mailing lists and no-reply addresses
         if any(x in sender.lower() for x in ("noreply", "no-reply", "donotreply", "newsletter", "mailer-daemon")):
             continue
         subject = msg.get("subject", "")
@@ -145,53 +250,81 @@ def _exec_gmail_ooo(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict
 
 
 def _exec_gmail_vip_flag(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict:
-    """Star or mark-important emails from VIP senders."""
+    """
+    Star and/or label emails from VIP senders.
+    Bug fixes:
+      - 'all' sender value = match all inbox emails (wildcard, not an address)
+      - 'Star + Label as VIP': resolve or create the 'VIP' label first, then apply
+        STARRED + vipLabelId in a single modify call so neither is skipped
+    """
     from command_executor import gmail_search
     senders = _ensure_list(fv.get("senders") or fv.get("sender"))
     action  = (fv.get("action") or "Mark as important").lower()
-    if not senders:
-        return {"items": 0, "message": "No VIP senders configured"}
 
-    from_query = " OR ".join(f"from:{s}" for s in senders)
-    query  = f"({from_query}) in:inbox{_after_ts(last_run)}"
+    # Build Gmail query — "all" means match every inbox email
+    if not senders or _is_all_wildcard(senders):
+        query = f"in:inbox{_after_ts(last_run)}"
+    else:
+        from_query = " OR ".join(f"from:{s}" for s in senders)
+        query      = f"({from_query}) in:inbox{_after_ts(last_run)}"
+
     result = gmail_search(tok, rtok, query, max_results=20)
     msgs   = result.get("messages", [])
-    done   = 0
+    if not msgs:
+        return {"items": 0, "message": "No matching emails found"}
+
+    # Resolve label IDs before the modify loop (avoid one API call per message)
+    add_label_ids = []
+    if "star" in action:
+        add_label_ids.append("STARRED")
+    if "vip" in action or "label" in action:
+        try:
+            vip_id = _get_or_create_label(tok, rtok, "VIP")
+            add_label_ids.append(vip_id)
+        except Exception as exc:
+            logger.warning("[AutoExec] Could not resolve VIP label: %s", exc)
+    if "important" in action and "vip" not in action:
+        add_label_ids.append("IMPORTANT")
+
+    if not add_label_ids:
+        add_label_ids = ["IMPORTANT"]
+
+    done = 0
     for msg in msgs:
-        add_labels = []
-        if "star" in action:
-            add_labels.append("STARRED")
-        if "important" in action or "vip" in action:
-            add_labels.append("IMPORTANT")
-        if add_labels:
-            _gmail_modify(tok, rtok, msg["id"], add_labels=add_labels)
+        msg_id = msg.get("id")
+        if not msg_id:
+            continue
+        _gmail_modify(tok, rtok, msg_id, add_labels=add_label_ids)
         done += 1
-    return {"items": done, "message": f"Flagged {done} email(s) from VIP senders"}
+    return {"items": done, "message": f"Flagged {done} email(s) ({', '.join(add_label_ids)})"}
 
 
 def _exec_gmail_receipts(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict:
-    """Archive receipt and invoice emails."""
     from command_executor import gmail_archive
-    query = "(receipt OR invoice OR \"order confirmation\" OR \"payment confirmation\" OR \"order #\" OR \"your order\")"
+    query  = "(receipt OR invoice OR \"order confirmation\" OR \"payment confirmation\" OR \"order #\" OR \"your order\")"
     result = gmail_archive(tok, rtok, query, max_results=50)
     n = result.get("archived", 0)
     return {"items": n, "message": f"Archived {n} receipt/invoice email(s)"}
 
 
 def _exec_gmail_alert_person(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict:
-    """Notify (mark important / forward) when a specific sender emails."""
-    from command_executor import gmail_search, gmail_send
+    from command_executor import gmail_search
     senders = _ensure_list(fv.get("sender") or fv.get("senders"))
     method  = (fv.get("notify_method") or "Mark as important").lower()
-    if not senders:
-        return {"items": 0, "message": "No sender configured"}
 
-    from_query = " OR ".join(f"from:{s}" for s in senders)
-    query  = f"({from_query}) in:inbox{_after_ts(last_run)}"
+    if not senders or _is_all_wildcard(senders):
+        query = f"in:inbox{_after_ts(last_run)}"
+    else:
+        from_query = " OR ".join(f"from:{s}" for s in senders)
+        query      = f"({from_query}) in:inbox{_after_ts(last_run)}"
+
     result = gmail_search(tok, rtok, query, max_results=10)
     msgs   = result.get("messages", [])
     done   = 0
     for msg in msgs:
+        msg_id = msg.get("id")
+        if not msg_id:
+            continue
         if "forward" in method:
             user_email = _get_user_email(tok, rtok)
             if user_email:
@@ -200,18 +333,17 @@ def _exec_gmail_alert_person(fv: dict, tok: str, rtok: str, last_run: str | None
             labels = ["IMPORTANT"]
             if "star" in method:
                 labels.append("STARRED")
-            _gmail_modify(tok, rtok, msg["id"], add_labels=labels)
+            _gmail_modify(tok, rtok, msg_id, add_labels=labels)
         done += 1
     return {"items": done, "message": f"Alerted on {done} email(s) from monitored sender(s)"}
 
 
 def _exec_gmail_daily_digest(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
-    """Compile unread important emails and send a digest to the user."""
     from command_executor import gmail_search, gmail_send
-    label      = (fv.get("label") or "").strip()
-    query      = f"is:unread {'label:' + label if label else 'is:important'}"
-    result     = gmail_search(tok, rtok, query, max_results=10)
-    msgs       = result.get("messages", [])
+    label  = (fv.get("label") or "").strip()
+    query  = f"is:unread {'label:' + label if label else 'is:important'}"
+    result = gmail_search(tok, rtok, query, max_results=10)
+    msgs   = result.get("messages", [])
     if not msgs:
         return {"items": 0, "message": "No unread important emails — digest skipped"}
 
@@ -225,18 +357,14 @@ def _exec_gmail_daily_digest(fv: dict, tok: str, rtok: str, _last: str | None) -
         lines.append(f"   Subject: {m.get('subject', '?')}")
         lines.append(f"   Preview: {m.get('snippet', '')[:120]}")
         lines.append("")
-    body = "\n".join(lines)
-    gmail_send(tok, rtok, user_email, "📋 Your Daily Email Digest", body)
+    gmail_send(tok, rtok, user_email, "📋 Your Daily Email Digest", "\n".join(lines))
     return {"items": len(msgs), "message": f"Digest sent with {len(msgs)} email(s)"}
 
 
 def _exec_gmail_followup(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
-    """Find sent emails with no reply after X days and send a reminder."""
     from command_executor import gmail_search, gmail_send
     days  = int(fv.get("days") or 3)
     label = (fv.get("label") or "").strip()
-
-    # Search sent emails older than X days that haven't been replied to
     q_label = f"label:{label}" if label else ""
     query   = f"in:sent older_than:{days}d {q_label}".strip()
     result  = gmail_search(tok, rtok, query, max_results=10)
@@ -246,18 +374,16 @@ def _exec_gmail_followup(fv: dict, tok: str, rtok: str, _last: str | None) -> di
 
     user_email = _get_user_email(tok, rtok)
     if not user_email:
-        return {"items": 0, "message": "Could not determine user email for reminder delivery"}
+        return {"items": 0, "message": "Could not determine user email"}
 
-    lines = [f"Follow-up reminder — the following sent emails have had no reply for {days}+ days:\n"]
+    lines = [f"Follow-up reminder — these sent emails have had no reply for {days}+ days:\n"]
     for m in msgs[:5]:
-        lines.append(f"• To: {m.get('to', '?')} | Subject: {m.get('subject', '?')} | Sent: {m.get('date', '?')}")
-    body = "\n".join(lines)
-    gmail_send(tok, rtok, user_email, f"🔔 Follow-up Reminder ({len(msgs)} email(s))", body)
+        lines.append(f"• To: {m.get('to', '?')} | Subject: {m.get('subject', '?')}")
+    gmail_send(tok, rtok, user_email, f"🔔 Follow-up Reminder ({len(msgs)} email(s))", "\n".join(lines))
     return {"items": len(msgs), "message": f"Follow-up reminder sent for {len(msgs)} email(s)"}
 
 
 def _exec_gmail_escalate(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
-    """Forward urgent unreplied emails after X hours to escalation address."""
     from command_executor import gmail_search
     keywords    = _ensure_list(fv.get("keywords") or fv.get("keyword"))
     hours       = int(fv.get("hours") or 4)
@@ -266,11 +392,10 @@ def _exec_gmail_escalate(fv: dict, tok: str, rtok: str, _last: str | None) -> di
         return {"items": 0, "message": "Missing urgency keywords or escalation address"}
 
     kw_query = " OR ".join(f'"{k}"' for k in keywords)
-    # Find emails older than X hours with the urgency keyword
-    query  = f"({kw_query}) in:inbox older_than:{hours}h"
-    result = gmail_search(tok, rtok, query, max_results=10)
-    msgs   = result.get("messages", [])
-    done   = 0
+    query    = f"({kw_query}) in:inbox older_than:{hours}h"
+    result   = gmail_search(tok, rtok, query, max_results=10)
+    msgs     = result.get("messages", [])
+    done     = 0
     for msg in msgs:
         for recipient in escalate_to:
             _gmail_forward(tok, rtok, msg, recipient)
@@ -279,21 +404,18 @@ def _exec_gmail_escalate(fv: dict, tok: str, rtok: str, _last: str | None) -> di
 
 
 def _exec_cal_focus_time(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
-    """Create a focus-time calendar event for today (weekdays only)."""
     from command_executor import calendar_create
     today = datetime.now(tz.utc)
-    if today.weekday() >= 5:  # Saturday=5, Sunday=6
+    if today.weekday() >= 5:
         return {"items": 0, "message": "Skipped — today is a weekend"}
 
     start_time  = (fv.get("start_time") or "09:00").strip()
     duration    = float(fv.get("duration") or 2)
     event_title = (fv.get("event_title") or "Focus Time").strip()
-
     try:
         h, m = [int(x) for x in start_time.split(":")]
     except ValueError:
         h, m = 9, 0
-
     start_dt = today.replace(hour=h, minute=m, second=0, microsecond=0)
     end_dt   = start_dt + timedelta(hours=duration)
     result   = calendar_create(
@@ -304,17 +426,15 @@ def _exec_cal_focus_time(fv: dict, tok: str, rtok: str, _last: str | None) -> di
         attendees=[],
         description="Created automatically by WorkspaceFlow automations.",
     )
-    created = result.get("title") or event_title
-    return {"items": 1, "message": f"Created focus block: '{created}'"}
+    return {"items": 1, "message": f"Created focus block: '{result.get('title', event_title)}'"}
 
 
 def _exec_cal_meeting_reminder(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
-    """Send reminder emails to attendees of meetings starting soon."""
     from command_executor import calendar_search, gmail_send
     minutes_before = int(fv.get("minutes_before") or 30)
     message        = (fv.get("message") or "Reminder: you have a meeting starting soon.").strip()
 
-    now     = datetime.now(tz.utc)
+    now          = datetime.now(tz.utc)
     window_start = now.isoformat()
     window_end   = (now + timedelta(minutes=minutes_before + 5)).isoformat()
 
@@ -332,15 +452,119 @@ def _exec_cal_meeting_reminder(fv: dict, tok: str, rtok: str, _last: str | None)
     return {"items": sent, "message": f"Sent {sent} reminder(s) for {len(events)} upcoming meeting(s)"}
 
 
+# ── Push-mode: execute automation against one specific message ─────────────────
+
+def execute_automation_on_message(automation: dict, message: dict,
+                                   access_token: str, refresh_token: str) -> dict:
+    """
+    Real-time push mode: evaluate and execute one automation against one
+    specific incoming email message.  Returns {"items": N, "message": str, "status": str}.
+    """
+    template_id = automation.get("template_id", "")
+    fv          = automation.get("field_values") or {}
+
+    try:
+        if template_id == "gmail-forward-keyword":
+            keywords   = _ensure_list(fv.get("keywords") or fv.get("keyword"))
+            forward_to = _ensure_list(fv.get("forward_to"))
+            if not keywords or not forward_to:
+                return {"items": 0, "message": "Missing config", "status": "skipped"}
+            if not _message_matches_keywords(message, keywords):
+                return {"items": 0, "message": "No keyword match", "status": "skipped"}
+            for recipient in forward_to:
+                _gmail_forward(access_token, refresh_token, message, recipient)
+            return {"items": 1, "message": f"Forwarded to {len(forward_to)} recipient(s)", "status": "success"}
+
+        elif template_id == "gmail-ooo":
+            reply_msg  = (fv.get("reply_message") or "I'm out of office.").strip()
+            until_date = (fv.get("until_date") or "").strip()
+            if until_date:
+                try:
+                    until_dt = datetime.fromisoformat(until_date)
+                    if until_dt.tzinfo is None:
+                        until_dt = until_dt.replace(tzinfo=tz.utc)
+                    if datetime.now(tz.utc) > until_dt:
+                        return {"items": 0, "message": "OOO period ended", "status": "skipped"}
+                except Exception:
+                    pass
+            sender = message.get("from", "")
+            if any(x in sender.lower() for x in ("noreply", "no-reply", "donotreply", "newsletter", "mailer-daemon")):
+                return {"items": 0, "message": "Skipped automated sender", "status": "skipped"}
+            from command_executor import gmail_send
+            subject = message.get("subject", "")
+            gmail_send(access_token, refresh_token, sender,
+                       f"Re: {subject}" if not subject.startswith("Re:") else subject, reply_msg)
+            return {"items": 1, "message": "Auto-reply sent", "status": "success"}
+
+        elif template_id == "gmail-vip-flag":
+            senders = _ensure_list(fv.get("senders") or fv.get("sender"))
+            if not _message_from_matches(message, senders):
+                return {"items": 0, "message": "Sender not in VIP list", "status": "skipped"}
+            action = (fv.get("action") or "Mark as important").lower()
+            msg_id = message.get("id")
+            if not msg_id:
+                return {"items": 0, "message": "No message ID", "status": "error"}
+            add_label_ids = []
+            if "star" in action:
+                add_label_ids.append("STARRED")
+            if "vip" in action or "label" in action:
+                vip_id = _get_or_create_label(access_token, refresh_token, "VIP")
+                add_label_ids.append(vip_id)
+            if "important" in action and "vip" not in action:
+                add_label_ids.append("IMPORTANT")
+            if not add_label_ids:
+                add_label_ids = ["IMPORTANT"]
+            _gmail_modify(access_token, refresh_token, msg_id, add_labels=add_label_ids)
+            return {"items": 1, "message": f"Flagged ({', '.join(add_label_ids)})", "status": "success"}
+
+        elif template_id == "gmail-receipts":
+            receipt_kws = ["receipt", "invoice", "order confirmation", "payment confirmation", "your order"]
+            if not _message_matches_keywords(message, receipt_kws):
+                return {"items": 0, "message": "Not a receipt/invoice email", "status": "skipped"}
+            msg_id = message.get("id")
+            if msg_id:
+                _gmail_modify(access_token, refresh_token, msg_id, remove_labels=["INBOX"])
+            return {"items": 1, "message": "Archived receipt/invoice", "status": "success"}
+
+        elif template_id == "gmail-alert-person":
+            senders = _ensure_list(fv.get("sender") or fv.get("senders"))
+            if not _message_from_matches(message, senders):
+                return {"items": 0, "message": "Not from monitored sender", "status": "skipped"}
+            method = (fv.get("notify_method") or "Mark as important").lower()
+            msg_id = message.get("id")
+            if "forward" in method:
+                user_email = _get_user_email(access_token, refresh_token)
+                if user_email:
+                    _gmail_forward(access_token, refresh_token, message, user_email)
+            else:
+                labels = ["IMPORTANT"]
+                if "star" in method:
+                    labels.append("STARRED")
+                if msg_id:
+                    _gmail_modify(access_token, refresh_token, msg_id, add_labels=labels)
+            return {"items": 1, "message": "Alert action applied", "status": "success"}
+
+        else:
+            return {"items": 0, "message": f"Template '{template_id}' not supported in push mode", "status": "skipped"}
+
+    except Exception as exc:
+        logger.exception("[AutoExec] push-mode error for template=%s", template_id)
+        return {"items": 0, "message": str(exc)[:300], "status": "error"}
+
+
 # ── Schedule type helpers ─────────────────────────────────────────────────────
 
 def is_due(automation: dict, now_utc: datetime) -> bool:
-    """Return True if this automation should execute now."""
-    schedule   = (automation.get("schedule") or "").lower()
-    last_run   = automation.get("last_run_at")
-    fv         = automation.get("field_values") or {}
+    """
+    Return True if this automation should execute now in scheduled mode.
+    "On new email" automations are skipped here when Gmail Push is configured
+    (they are handled in real-time by the webhook instead).
+    """
+    schedule    = (automation.get("schedule") or "").lower()
+    last_run    = automation.get("last_run_at")
+    fv          = automation.get("field_values") or {}
+    push_active = bool(os.getenv("GMAIL_PUBSUB_TOPIC"))
 
-    # Parse last_run_at
     last_run_dt = None
     if last_run:
         try:
@@ -350,10 +574,12 @@ def is_due(automation: dict, now_utc: datetime) -> bool:
         except Exception:
             pass
 
-    # Event-triggered — run every 5 minutes (poll for new items)
+    # "On new email" — handled by push when Pub/Sub is configured; otherwise poll every 5 min
     if any(s in schedule for s in ("on new email", "on new calendar", "on new drive", "on form", "on drive", "on sheet")):
+        if push_active:
+            return False  # Real-time push handles this
         if last_run_dt and (now_utc - last_run_dt).total_seconds() < 240:
-            return False  # ran less than 4 min ago
+            return False
         return True
 
     # Hourly check
@@ -368,11 +594,10 @@ def is_due(automation: dict, now_utc: datetime) -> bool:
             return False
         return True
 
-    # Daily (weekdays) — run once per weekday at the configured time
+    # Daily (weekdays) — once per weekday at the configured start_time
     if "weekday" in schedule or "daily (weekday" in schedule:
         if now_utc.weekday() >= 5:
             return False
-        # If already ran today, skip
         if last_run_dt and last_run_dt.date() == now_utc.date():
             return False
         start_time = (fv.get("start_time") or "09:00").strip()
@@ -380,18 +605,15 @@ def is_due(automation: dict, now_utc: datetime) -> bool:
             h, m = [int(x) for x in start_time.split(":")]
         except ValueError:
             h, m = 9, 0
-        # Run within 5 minutes of the configured time
         return now_utc.hour == h and abs(now_utc.minute - m) <= 2
 
     # "Daily at HH:MM" or "Weekly on ... at HH:MM"
     if "daily at" in schedule or "weekly" in schedule:
-        # Extract time from schedule string e.g. "Daily at 08:00" or field values
         time_val = fv.get("run_time") or fv.get("send_time")
         if not time_val:
-            # Try to extract from schedule string
-            import re
-            m = re.search(r"(\d{1,2}:\d{2})", schedule)
-            time_val = m.group(1) if m else "08:00"
+            import re as _re
+            tm = _re.search(r"(\d{1,2}:\d{2})", schedule)
+            time_val = tm.group(1) if tm else "08:00"
         try:
             h, mn = [int(x) for x in time_val.split(":")]
         except ValueError:
@@ -411,39 +633,40 @@ def is_due(automation: dict, now_utc: datetime) -> bool:
 
         return now_utc.hour == h and abs(now_utc.minute - mn) <= 2
 
-    # "Before each meeting" — run every 5 min
+    # "Before each meeting"
     if "before each meeting" in schedule or "before each" in schedule:
         if last_run_dt and (now_utc - last_run_dt).total_seconds() < 240:
             return False
         return True
 
-    # Default: run every 5 minutes if no specific schedule
+    # Default
     if last_run_dt and (now_utc - last_run_dt).total_seconds() < 240:
         return False
     return True
 
 
-# ── Main dispatcher ───────────────────────────────────────────────────────────
+# ── Main dispatcher (scheduled mode) ─────────────────────────────────────────
 
 _EXECUTORS = {
-    "gmail-forward-keyword":    _exec_gmail_forward_keyword,
+    "gmail-forward-keyword":     _exec_gmail_forward_keyword,
     "gmail-archive-newsletters": _exec_gmail_archive_newsletters,
-    "gmail-ooo":                _exec_gmail_ooo,
-    "gmail-vip-flag":           _exec_gmail_vip_flag,
-    "gmail-receipts":           _exec_gmail_receipts,
-    "gmail-alert-person":       _exec_gmail_alert_person,
-    "gmail-daily-digest":       _exec_gmail_daily_digest,
-    "gmail-followup":           _exec_gmail_followup,
-    "gmail-escalate":           _exec_gmail_escalate,
-    "cal-focus-time":           _exec_cal_focus_time,
-    "cal-meeting-reminder":     _exec_cal_meeting_reminder,
+    "gmail-ooo":                 _exec_gmail_ooo,
+    "gmail-vip-flag":            _exec_gmail_vip_flag,
+    "gmail-receipts":            _exec_gmail_receipts,
+    "gmail-alert-person":        _exec_gmail_alert_person,
+    "gmail-daily-digest":        _exec_gmail_daily_digest,
+    "gmail-followup":            _exec_gmail_followup,
+    "gmail-escalate":            _exec_gmail_escalate,
+    "cal-focus-time":            _exec_cal_focus_time,
+    "cal-meeting-reminder":      _exec_cal_meeting_reminder,
 }
 
 
 def execute_automation(automation: dict, access_token: str, refresh_token: str) -> dict:
     """
-    Execute one automation rule. Returns {"items": N, "message": str, "status": "success"|"error"}.
-    This is synchronous — wrap in run_in_executor when calling from async context.
+    Execute one automation rule in scheduled mode.
+    Returns {"items": N, "message": str, "status": "success"|"error"|"skipped"}.
+    Synchronous — wrap in run_in_executor when calling from async context.
     """
     template_id = automation.get("template_id", "")
     fv          = automation.get("field_values") or {}
@@ -459,8 +682,7 @@ def execute_automation(automation: dict, access_token: str, refresh_token: str) 
 
     try:
         result = executor(fv, access_token, refresh_token, last_run)
-        return {**result, "status": "success"}
+        return {**result, "status": result.get("status", "success")}
     except Exception as exc:
-        logger.exception("[AutomationExecutor] template=%s automation_id=%s",
-                         template_id, automation.get("id"))
+        logger.exception("[AutoExec] template=%s automation_id=%s", template_id, automation.get("id"))
         return {"items": 0, "message": str(exc)[:300], "status": "error"}

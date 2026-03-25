@@ -904,6 +904,71 @@ async def run_automation_now(automation_id: str, request: Request):
     return result
 
 
+# ── Gmail Push Notifications ──────────────────────────────────────────────────
+
+@app.post("/api/gmail/watch")
+@limiter.limit("10/minute")
+async def register_gmail_watch_endpoint(request: Request):
+    """
+    Register (or renew) Gmail push watch for the authenticated user.
+    Call this after saving an "on new email" automation.
+    Requires GMAIL_PUBSUB_TOPIC env var to be configured.
+    """
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    sb_url      = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    profile_url = f"{sb_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        presp    = await client.get(profile_url, headers=_sb_service_headers())
+        profiles = presp.json() if presp.status_code == 200 else []
+
+    if not profiles or not profiles[0].get("google_access_token"):
+        raise HTTPException(status_code=400, detail="Google account not connected.")
+
+    profile      = profiles[0]
+    from jobs.gmail_push import register_gmail_watch
+    result = await register_gmail_watch(
+        user_id,
+        profile["google_access_token"],
+        profile.get("google_refresh_token"),
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return {"ok": True, "historyId": result.get("historyId"), "expiration": result.get("expiration")}
+
+
+@app.post("/api/gmail/webhook")
+async def gmail_webhook(request: Request):
+    """
+    Receives Gmail push notifications from Google Cloud Pub/Sub.
+
+    Google sends a POST with:
+      { "message": { "data": "<base64url JSON>", "messageId": "...", "publishTime": "..." },
+        "subscription": "..." }
+
+    Must respond 2xx to acknowledge; Pub/Sub retries on 5xx.
+    Optional security: set GMAIL_WEBHOOK_SECRET and pass it as ?token=SECRET
+    in the Pub/Sub subscription push endpoint URL.
+    """
+    secret = os.getenv("GMAIL_WEBHOOK_SECRET", "")
+    if secret:
+        token = request.query_params.get("token", "")
+        if token != secret:
+            # Return 200 to avoid Pub/Sub retries for invalid tokens
+            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=200)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=200)
+
+    from jobs.gmail_push import process_push_notification
+    result = await process_push_notification(body)
+    logger.info("[Gmail Webhook] result: %s", result)
+    return JSONResponse({"ok": True, **result}, status_code=200)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
