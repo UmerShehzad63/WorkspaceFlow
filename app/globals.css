@@ -912,9 +912,12 @@ h1, h2, h3, h4, h5, h6 {
 .dashboard-content {
   flex: 1;
   margin-left: var(--sidebar-width);
-  padding: var(--sp-8);
   min-height: 100vh;
   background: var(--color-surface);
+}
+
+.dashboard-inner {
+  padding: var(--sp-8);
 }
 
 .page-header {
@@ -948,10 +951,10 @@ h1, h2, h3, h4, h5, h6 {
   .nav-actions .btn { display: none; }
 
   .container { padding: 0 var(--sp-4); }
-  .section { padding: var(--sp-16) 0; }
+  .section { padding: var(--sp-12) 0; }
 
   .footer-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: var(--sp-8);
   }
 
@@ -967,12 +970,32 @@ h1, h2, h3, h4, h5, h6 {
 
   .dashboard-content {
     margin-left: 0;
+    padding-bottom: 72px;
+  }
+
+  .dashboard-inner {
     padding: var(--sp-4);
-    padding-bottom: 80px;
+  }
+
+  .page-header h1 {
+    font-size: var(--fs-2xl);
   }
 
   .mobile-bottom-nav {
     display: flex;
+  }
+
+  .auth-card {
+    padding: var(--sp-6);
+    border-radius: var(--radius-lg);
+  }
+
+  .auth-card h1 {
+    font-size: var(--fs-xl);
+  }
+
+  .pricing-amount {
+    font-size: var(--fs-4xl);
   }
 }
 
@@ -980,6 +1003,46 @@ h1, h2, h3, h4, h5, h6 {
   .btn-lg {
     padding: var(--sp-3) var(--sp-6);
     font-size: var(--fs-sm);
+  }
+
+  .footer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .container {
+    padding: 0 var(--sp-3);
+  }
+
+  .auth-card {
+    padding: var(--sp-5);
+  }
+
+  .dashboard-inner {
+    padding: var(--sp-3);
+  }
+
+  .mobile-bottom-nav {
+    height: 60px;
+  }
+
+  .mobile-bottom-nav a {
+    font-size: 9px;
+    padding: var(--sp-1);
+  }
+
+  .mobile-bottom-nav .nav-icon {
+    font-size: 18px;
+  }
+}
+
+/* ---- Responsive: Modals ---- */
+@media (max-width: 640px) {
+  /* Any fixed-width modal content should go edge-to-edge */
+  [class*="modalContent"],
+  [class*="setupModalContent"] {
+    max-width: 100% !important;
+    border-radius: var(--radius-lg) !important;
+    margin: 0 var(--sp-3);
   }
 }
 

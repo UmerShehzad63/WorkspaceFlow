@@ -722,32 +722,71 @@
 /* ===== Responsive ===== */
 @media (max-width: 1024px) {
   .featuresGrid {
-    grid-template-columns: 1fr;
-    max-width: 500px;
-    margin: 0 auto;
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .testimonialsGrid {
-    grid-template-columns: 1fr;
-    max-width: 500px;
-    margin: 0 auto;
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .pricingGrid {
-    grid-template-columns: 1fr;
-    max-width: 400px;
+    grid-template-columns: repeat(2, 1fr);
+    max-width: 700px;
+  }
+
+  .heroPreview {
+    max-width: 100%;
   }
 }
 
 @media (max-width: 768px) {
   .hero {
-    padding-top: 100px;
-    padding-bottom: 60px;
+    padding-top: 90px;
+    padding-bottom: 48px;
+    min-height: auto;
+  }
+
+  .heroContent {
+    margin-bottom: 36px;
+  }
+
+  .heroCtas {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .heroCtas a,
+  .heroCtas button {
+    width: 100%;
+    max-width: 320px;
+    justify-content: center;
+  }
+
+  .heroPreview {
+    max-width: 100%;
+    animation: none;
+  }
+
+  .previewBody {
+    padding: 14px;
+  }
+
+  .featuresGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .featureCard {
+    padding: 24px;
   }
 
   .stepsGrid {
     flex-direction: column;
     align-items: center;
+  }
+
+  .step {
+    max-width: 100%;
+    width: 100%;
   }
 
   .stepConnector {
@@ -756,13 +795,27 @@
   }
 
   .socialLogos {
-    gap: 20px;
+    gap: 16px;
+  }
+
+  .sectionHeader {
+    margin-bottom: 36px;
+  }
+
+  .testimonialsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .pricingGrid {
+    grid-template-columns: 1fr;
+    max-width: 400px;
+    margin: 0 auto;
   }
 
   .comparisonTable th,
   .comparisonTable td {
-    padding: 10px 12px;
-    font-size: 0.78rem;
+    padding: 10px 10px;
+    font-size: 0.76rem;
   }
 
   .briefingEventDetails {
@@ -782,7 +835,54 @@
     gap: 4px;
   }
 
+  .briefingDemo {
+    max-width: 100%;
+  }
+
   .finalCta {
     padding: 60px 0;
+  }
+
+  .ctaButtons {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .ctaButtons a,
+  .ctaButtons button {
+    width: 100%;
+    max-width: 320px;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .heroTitle {
+    font-size: 2rem;
+  }
+
+  .previewCard {
+    border-radius: 12px;
+  }
+
+  .featuresGrid {
+    gap: 16px;
+  }
+
+  .featureCard {
+    padding: 20px;
+  }
+
+  .pricingGrid {
+    max-width: 100%;
+  }
+
+  .socialLogos {
+    gap: 12px;
+  }
+
+  .socialLogos span {
+    font-size: 0.78rem;
   }
 }

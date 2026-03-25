@@ -348,7 +348,7 @@ export default function DashboardLayout({ children }) {
         {/* ── Main content ───────────────────────────────────────────────── */}
         <main className="dashboard-content" style={{ padding: 0 }}>
           <GlobalHeader />
-          <div style={{ padding: '32px' }}>
+          <div className="dashboard-inner">
             <DashboardShell>{children}</DashboardShell>
           </div>
         </main>
@@ -362,7 +362,10 @@ export default function DashboardLayout({ children }) {
             <span className="nav-icon">💬</span>Commands
           </Link>
           <Link href="/dashboard/rules" className={pathname === '/dashboard/rules' ? 'active' : ''}>
-            <span className="nav-icon">🔄</span>Automations
+            <span className="nav-icon">🔄</span>Rules
+          </Link>
+          <Link href="/dashboard/telegram" className={pathname === '/dashboard/telegram' ? 'active' : ''}>
+            <span className="nav-icon">✈️</span>Telegram
           </Link>
           <Link href="/dashboard/settings" className={pathname === '/dashboard/settings' ? 'active' : ''}>
             <span className="nav-icon">⚙️</span>Settings
