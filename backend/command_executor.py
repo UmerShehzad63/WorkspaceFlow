@@ -859,37 +859,47 @@ def execute_command(intent, access_token, refresh_token, overrides=None, user_ti
                 # ── Step 2: Resolve Drive file ───────────────────────────────
                 resolved_file_meta = None
                 if drive_filename:
-                    file_id_override = _overrides.get("file_id", "").strip()
-                    if file_id_override:
+                    # Pre-resolved by Telegram picker — skip search entirely
+                    pre_file_id   = params.get("_drive_file_id", "").strip()
+                    pre_file_name = params.get("_drive_file_name", "").strip()
+                    if pre_file_id and params.get("_drive_file_resolved"):
                         svc = _drive_service(creds)
                         resolved_file_meta = svc.files().get(
-                            fileId=file_id_override,
+                            fileId=pre_file_id,
                             fields="id,name,mimeType,webViewLink",
                         ).execute()
                     else:
-                        candidates = find_file_candidates(creds, drive_filename)
-                        if not candidates:
-                            return {
-                                "type": "error",
-                                "error": f"No file named '{drive_filename}' found in your Google Drive.",
-                            }
-                        if len(candidates) > 1:
-                            return {
-                                "type": "needs_disambiguation",
-                                "kind": "file",
-                                "query": drive_filename,
-                                "candidates": [
-                                    {
-                                        "id": f["id"],
-                                        "name": f["name"],
-                                        "type": _GDRIVE_TYPE_LABELS.get(f["mimeType"], f["mimeType"].split("/")[-1]),
-                                        "modified": f.get("modifiedTime", ""),
-                                    }
-                                    for f in candidates
-                                ],
-                                "current_overrides": {**_overrides, "recipient_email": to},
-                            }
-                        resolved_file_meta = candidates[0]
+                        file_id_override = _overrides.get("file_id", "").strip()
+                        if file_id_override:
+                            svc = _drive_service(creds)
+                            resolved_file_meta = svc.files().get(
+                                fileId=file_id_override,
+                                fields="id,name,mimeType,webViewLink",
+                            ).execute()
+                        else:
+                            candidates = find_file_candidates(creds, drive_filename)
+                            if not candidates:
+                                return {
+                                    "type": "error",
+                                    "error": f"No file named '{drive_filename}' found in your Google Drive.",
+                                }
+                            if len(candidates) > 1:
+                                return {
+                                    "type": "needs_disambiguation",
+                                    "kind": "file",
+                                    "query": drive_filename,
+                                    "candidates": [
+                                        {
+                                            "id": f["id"],
+                                            "name": f["name"],
+                                            "type": _GDRIVE_TYPE_LABELS.get(f["mimeType"], f["mimeType"].split("/")[-1]),
+                                            "modified": f.get("modifiedTime", ""),
+                                        }
+                                        for f in candidates
+                                    ],
+                                    "current_overrides": {**_overrides, "recipient_email": to},
+                                }
+                            resolved_file_meta = candidates[0]
 
                 # ── Step 3: Send with attachment or plain ────────────────────
                 if resolved_file_meta:

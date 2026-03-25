@@ -604,7 +604,8 @@ async def _generate_and_preview(chat_id: str, intent: dict, user_id: str,
         else:
             await send_message(chat_id, text)
 
-    if not subject or not body:
+    # Always regenerate if subject/body missing or body is too short (likely a stub from intent parser)
+    if not subject or not body or len(body) < 80:
         await _update_status("📧 Preparing email…")
         from ai_engine import generate_email_content
         sender_name = await _get_user_display_name(user_id)
@@ -613,10 +614,10 @@ async def _generate_and_preview(chat_id: str, intent: dict, user_id: str,
             generated = await generate_email_content(
                 original_command or to, to, sender_name=sender_name, to_name=to_name
             )
-            if not subject and generated.get("subject"):
+            if generated.get("subject"):
                 subject = generated["subject"]
                 params["subject"] = subject
-            if not body and generated.get("body"):
+            if generated.get("body"):
                 body = generated["body"]
                 params["body"] = body
         except Exception:

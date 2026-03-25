@@ -357,7 +357,8 @@ async def run_command(request: Request):
         # ── Step 2: Generate email content ────────────────────────────────
         subject = (params.get("subject") or "").strip()
         body    = (params.get("body") or params.get("message") or params.get("content") or "").strip()
-        if not subject or not body:
+        # Regenerate if subject/body missing or body is too short (likely a stub from intent parser)
+        if not subject or not body or len(body) < 80:
             from ai_engine import generate_email_content
             meta        = user.get("user_metadata") or {}
             sender_name = (meta.get("full_name") or meta.get("name") or "").strip()
@@ -365,9 +366,9 @@ async def run_command(request: Request):
                 sender_name = (user.get("email") or "").split("@")[0]
             to_name   = (params.get("_to_name") or "").strip()
             generated = await generate_email_content(command, to, sender_name=sender_name, to_name=to_name)
-            if not subject and generated.get("subject"):
+            if generated.get("subject"):
                 params["subject"] = generated["subject"]
-            if not body and generated.get("body"):
+            if generated.get("body"):
                 params["body"] = generated["body"]
         intent["parameters"] = params
 
