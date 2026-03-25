@@ -44,7 +44,10 @@
       "Bash(python:*)",
       "Bash(find /c/Users/umers/OneDrive/Desktop/Apps/WorkSpaceFLow/workspaceflow/app -type f -name *rule*)",
       "Bash(find c:/Users/umers/OneDrive/Desktop/Apps/WorkSpaceFLow/workspaceflow -name couchmail.zip -o -name *.png -o -name *.jpg -o -name *.svg -o -name *.webp)",
-      "Bash(unzip -o couchmail.zip -d couchmail_design)"
+      "Bash(unzip -o couchmail.zip -d couchmail_design)",
+      "Bash(sed -i 's/await send_message\\(chat_id, f\"\"❌ Email failed: {str\\(e\\)\\\\[:300\\\\]}\"\"\\)/await send_message\\(chat_id, \"\"❌ Failed to send email. Please try again.\"\"\\)/g' \"c:/Users/umers/OneDrive/Desktop/Apps/WorkSpaceFLow/workspaceflow/backend/routes/telegram.py\")",
+      "Bash(sed -i 's/await send_message\\(chat_id, f\"\"❌ Could not fetch events: {str\\(e\\)\\\\[:200\\\\]}\"\"\\)/await send_message\\(chat_id, \"\"❌ Could not fetch calendar events. Please try again.\"\"\\)/g' \"c:/Users/umers/OneDrive/Desktop/Apps/WorkSpaceFLow/workspaceflow/backend/routes/telegram.py\")",
+      "Bash(sed -i 's/await send_message\\(chat_id, f\"\"❌ Command failed: {str\\(e\\)\\\\[:300\\\\]}\"\"\\)/await send_message\\(chat_id, \"\"❌ Command failed. Please try again.\"\"\\)/g' \"c:/Users/umers/OneDrive/Desktop/Apps/WorkSpaceFLow/workspaceflow/backend/routes/telegram.py\")"
     ]
   }
 }
