@@ -1,5 +1,47 @@
 import Link from 'next/link';
-import Image from 'next/image';
+
+function CouchMailLogoLight() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+      <svg width="34" height="34" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="20" cy="20" r="19" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" fill="none" />
+        <circle cx="20" cy="20" r="19" stroke="url(#footerLogoGrad)" strokeWidth="1.5" fill="none" />
+        <path
+          d="M22 13 C17 13 13 16.5 13 20.5 C13 24.5 17 28 22 28"
+          stroke="url(#footerLogoGrad)"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          fill="none"
+        />
+        <path
+          d="M20 27 L20 16 L24.5 21 L29 16 L29 27"
+          stroke="url(#footerLogoGrad)"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+        <circle cx="24.5" cy="21" r="1.5" fill="#7264e8" />
+        <defs>
+          <linearGradient id="footerLogoGrad" x1="8" y1="10" x2="32" y2="30" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#a89df0" />
+            <stop offset="100%" stopColor="#e8ecff" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <span style={{
+        fontFamily: "'Manrope', 'Inter', sans-serif",
+        fontWeight: 800,
+        fontSize: '1.15rem',
+        color: '#fff',
+        letterSpacing: '-0.02em',
+        lineHeight: 1,
+      }}>
+        CouchMail
+      </span>
+    </div>
+  );
+}
 
 export default function Footer() {
   return (
@@ -7,8 +49,8 @@ export default function Footer() {
       <div className="container">
         <div className="footer-grid">
           <div className="footer-brand">
-            <Link href="/" style={{ display: 'inline-block', marginBottom: '4px' }}>
-              <Image src="/logo.png" alt="CouchMail" width={130} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
+            <Link href="/" style={{ textDecoration: 'none', display: 'inline-block', marginBottom: '4px' }}>
+              <CouchMailLogoLight />
             </Link>
             <p>Intelligence for the modern workspace. AI-powered briefings that synthesize your emails, docs, and calendar into one actionable daily dossier.</p>
           </div>

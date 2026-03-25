@@ -212,8 +212,14 @@ export default function DashboardLayout({ children }) {
 
   if (loading) {
     return (
-      <div className="loading-screen" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface)', color: 'var(--text-primary)' }}>
-        <img src="/logo.png" alt="CouchMail" style={{ height: '40px', opacity: 0.5 }} />
+      <div className="loading-screen" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface)', gap: '10px' }}>
+        <svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ opacity: 0.5 }}>
+          <circle cx="20" cy="20" r="19" stroke="#5644d0" strokeWidth="1.5" fill="none" />
+          <path d="M22 13 C17 13 13 16.5 13 20.5 C13 24.5 17 28 22 28" stroke="#5644d0" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+          <path d="M20 27 L20 16 L24.5 21 L29 16 L29 27" stroke="#5644d0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          <circle cx="24.5" cy="21" r="1.5" fill="#5644d0" />
+        </svg>
+        <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1.1rem', color: '#001857', opacity: 0.5 }}>CouchMail</span>
       </div>
     );
   }
@@ -225,8 +231,23 @@ export default function DashboardLayout({ children }) {
         {/* ── Sidebar ───────────────────────────────────────────────────── */}
         <aside className="sidebar" style={{ top: 0 }}>
           <div className="sidebar-header">
-            <Link href="/" style={{ display: 'inline-block', marginBottom: '8px' }}>
-              <img src="/logo.png" alt="CouchMail" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
+            <Link href="/" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '9px', marginBottom: '8px' }}>
+              <svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="20" cy="20" r="19" stroke="#5644d0" strokeWidth="1.5" fill="none" opacity="0.5" />
+                <circle cx="20" cy="20" r="19" stroke="url(#sbLogoGrad)" strokeWidth="1.5" fill="none" />
+                <path d="M22 13 C17 13 13 16.5 13 20.5 C13 24.5 17 28 22 28" stroke="url(#sbLogoGrad)" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+                <path d="M20 27 L20 16 L24.5 21 L29 16 L29 27" stroke="url(#sbLogoGrad)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                <circle cx="24.5" cy="21" r="1.5" fill="#5644d0" />
+                <defs>
+                  <linearGradient id="sbLogoGrad" x1="8" y1="10" x2="32" y2="30" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#7264e8" />
+                    <stop offset="100%" stopColor="#001857" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1.05rem', color: '#001857', letterSpacing: '-0.02em', lineHeight: 1 }}>
+                CouchMail
+              </span>
             </Link>
           </div>
 
