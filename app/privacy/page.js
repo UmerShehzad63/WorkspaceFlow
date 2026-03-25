@@ -94,7 +94,7 @@ export default function PrivacyPage() {
           </Section>
 
           <Section title="9. Your Rights">
-            <p>Depending on your jurisdiction you may have rights to access, correct, delete, or restrict processing of your personal data. To exercise any of these rights, contact us at <a href="mailto:privacy@couchmail.app" style={{ color: 'var(--color-secondary)' }}>privacy@couchmail.app</a>. You may also revoke CouchMail's access to your Google data at any time via your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-secondary)' }}>Google Account Permissions</a> page.</p>
+            <p>Depending on your jurisdiction you may have rights to access, correct, delete, or restrict processing of your personal data. To exercise any of these rights, contact us at <a href="mailto:umershehzad.at1863@gmail.com" style={{ color: 'var(--color-secondary)' }}>umershehzad.at1863@gmail.com</a>. You may also revoke CouchMail's access to your Google data at any time via your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-secondary)' }}>Google Account Permissions</a> page.</p>
           </Section>
 
           <Section title="10. Children's Privacy">
@@ -106,7 +106,7 @@ export default function PrivacyPage() {
           </Section>
 
           <Section title="12. Contact">
-            <p>For any questions about this Privacy Policy please contact us at <a href="mailto:privacy@couchmail.app" style={{ color: 'var(--color-secondary)' }}>privacy@couchmail.app</a>.</p>
+            <p>For any questions about this Privacy Policy please contact us at <a href="mailto:umershehzad.at1863@gmail.com" style={{ color: 'var(--color-secondary)' }}>umershehzad.at1863@gmail.com</a>.</p>
           </Section>
 
         </div>

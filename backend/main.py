@@ -121,7 +121,7 @@ async def health():
 
 @app.get("/")
 async def root():
-    return {"status": "WorkspaceFlow Backend Online", "model": "gpt-4o-mini (OpenAI)"}
+    return {"status": "ok"}
 
 
 # ── Morning Briefing — schedule only (fast, ~1-2 s) ─────────────────────────
@@ -152,8 +152,9 @@ async def get_briefing_schedule(request: Request):
         schedule = await loop.run_in_executor(
             None, functools.partial(fetch_schedule_only, access_token, refresh_token)
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch calendar: {str(e)[:200]}")
+    except Exception:
+        logger.exception("Failed to fetch calendar schedule (user_id=%s)", user_id)
+        raise HTTPException(status_code=502, detail="Failed to fetch calendar. Try reconnecting your Google account.")
 
     return {"schedule": schedule}
 
@@ -222,6 +223,12 @@ async def run_command(request: Request):
     overrides    = data.get("overrides") or {}
     preview_only = bool(data.get("preview_only", False))
     req_timezone = (data.get("timezone") or "").strip() or "UTC"
+    try:
+        import zoneinfo
+        if req_timezone not in zoneinfo.available_timezones():
+            req_timezone = "UTC"
+    except Exception:
+        pass
 
     if not command:
         raise HTTPException(status_code=400, detail="Command cannot be empty")
@@ -443,8 +450,8 @@ async def run_command(request: Request):
         match = _re.search(r'"message":\s*"([^"]+)"', error_str)
         if match:
             raise HTTPException(status_code=502, detail=f"Google API error: {match.group(1)}")
-        # Surface the raw error (truncated) rather than a useless generic message
-        raise HTTPException(status_code=502, detail=f"Command failed: {str(e)[:200]}")
+        logger.exception("Command execution failed (user_id=%s)", user_id)
+        raise HTTPException(status_code=502, detail="Command execution failed. Please try again.")
 
     if isinstance(result, dict) and result.get("type") == "error":
         raise HTTPException(status_code=422, detail=result["error"])
@@ -647,8 +654,13 @@ async def contact_support(
 @app.get("/api/test")
 @limiter.limit("10/minute")
 async def test_connectivity(request: Request):
-    """Authenticated connectivity check — prevents config enumeration."""
-    await require_auth(request)
+    """Admin-only connectivity check — requires ADMIN_SECRET header."""
+    admin_secret = os.getenv("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(status_code=503, detail="Diagnostic endpoint not configured")
+    provided = request.headers.get("X-Admin-Secret", "")
+    if not provided or not _secrets.compare_digest(provided, admin_secret):
+        raise HTTPException(status_code=403, detail="Forbidden")
     results = {}
 
     from ai_engine import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
@@ -698,16 +710,16 @@ async def test_connectivity(request: Request):
 async def send_all_briefings(request: Request):
     """
     External cron endpoint — triggers daily briefings for all due users.
-    Secure with CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
-    Set up a free cron job at cron-job.org to hit this endpoint daily at your chosen time.
-    Example: POST https://workspaceflow-backend.onrender.com/api/briefing/send-all
-             Authorization: Bearer <your-CRON_SECRET>
+    Requires CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
     """
+    import secrets as _secrets
     cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret:
-        auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {cron_secret}":
-            raise HTTPException(status_code=401, detail="Unauthorized")
+    if not cron_secret:
+        raise HTTPException(status_code=503, detail="Cron endpoint not configured")
+    auth = request.headers.get("Authorization", "")
+    provided = auth.removeprefix("Bearer ").strip()
+    if not _secrets.compare_digest(provided, cron_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     from jobs.scheduler import send_daily_briefings
     print("[Cron] /api/briefing/send-all triggered")
@@ -722,15 +734,16 @@ async def send_daily_briefings_endpoint(request: Request):
     """
     External cron endpoint — triggers daily briefings for all due users.
     Returns: {"sent": N, "skipped": M, "errors": P}
-    Secure with CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
-    Setup: cron-job.org → POST https://workspaceflow-backend.onrender.com/api/briefing/send-daily
-    Schedule: Every day at 8:00 AM (or your preferred time)
+    Requires CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
     """
+    import secrets as _secrets
     cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret:
-        auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {cron_secret}":
-            raise HTTPException(status_code=401, detail="Unauthorized")
+    if not cron_secret:
+        raise HTTPException(status_code=503, detail="Cron endpoint not configured")
+    auth = request.headers.get("Authorization", "")
+    provided = auth.removeprefix("Bearer ").strip()
+    if not _secrets.compare_digest(provided, cron_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     from jobs.scheduler import send_daily_briefings
     print("[Cron] /api/briefing/send-daily triggered")
@@ -939,6 +952,7 @@ async def register_gmail_watch_endpoint(request: Request):
 
 
 @app.post("/api/gmail/webhook")
+@limiter.limit("60/minute")
 async def gmail_webhook(request: Request):
     """
     Receives Gmail push notifications from Google Cloud Pub/Sub.
@@ -951,12 +965,14 @@ async def gmail_webhook(request: Request):
     Optional security: set GMAIL_WEBHOOK_SECRET and pass it as ?token=SECRET
     in the Pub/Sub subscription push endpoint URL.
     """
+    import secrets as _secrets
     secret = os.getenv("GMAIL_WEBHOOK_SECRET", "")
-    if secret:
-        token = request.query_params.get("token", "")
-        if token != secret:
-            # Return 200 to avoid Pub/Sub retries for invalid tokens
-            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=200)
+    if not secret:
+        logger.error("[Gmail Webhook] GMAIL_WEBHOOK_SECRET not set — rejecting request")
+        return JSONResponse({"ok": False}, status_code=200)  # 200 to avoid Pub/Sub retries
+    token = request.query_params.get("token", "")
+    if not token or not _secrets.compare_digest(token, secret):
+        return JSONResponse({"ok": False}, status_code=200)
 
     try:
         body = await request.json()

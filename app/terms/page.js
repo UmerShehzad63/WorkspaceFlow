@@ -37,7 +37,7 @@ export default function TermsPage() {
               <li>Provide accurate information and keep it up to date.</li>
               <li>Be responsible for maintaining the confidentiality of your account and for all activity that occurs under it.</li>
             </ul>
-            <p>You must notify us immediately at <a href="mailto:support@couchmail.app" style={{ color: 'var(--color-secondary)' }}>support@couchmail.app</a> if you suspect any unauthorised use of your account. We are not liable for any loss resulting from unauthorised use that you fail to report promptly.</p>
+            <p>You must notify us immediately at <a href="mailto:umershehzad.at1863@gmail.com" style={{ color: 'var(--color-secondary)' }}>umershehzad.at1863@gmail.com</a> if you suspect any unauthorised use of your account. We are not liable for any loss resulting from unauthorised use that you fail to report promptly.</p>
             <p>We reserve the right to suspend or terminate accounts that violate these Terms, engage in fraudulent activity, or misuse the Service.</p>
           </Section>
 
@@ -91,7 +91,7 @@ export default function TermsPage() {
           </Section>
 
           <Section title="13. Contact">
-            <p>For questions about these Terms please contact us at <a href="mailto:legal@couchmail.app" style={{ color: 'var(--color-secondary)' }}>legal@couchmail.app</a>.</p>
+            <p>For questions about these Terms please contact us at <a href="mailto:umershehzad.at1863@gmail.com" style={{ color: 'var(--color-secondary)' }}>umershehzad.at1863@gmail.com</a>.</p>
           </Section>
 
         </div>

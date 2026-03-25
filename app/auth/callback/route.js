@@ -34,9 +34,7 @@ export async function GET(request) {
 
     if (error) {
       console.error('Supabase exchange error:', error.message);
-      return NextResponse.redirect(
-        `${requestUrl.origin}/login?error=auth_failed_${encodeURIComponent(error.message)}`
-      );
+      return NextResponse.redirect(`${requestUrl.origin}/login?error=auth_failed`);
     }
 
     const session = data?.session;
@@ -101,8 +99,6 @@ export async function GET(request) {
   } catch (err) {
     console.error('Auth callback crash:', err.message);
     const requestUrl = new URL(request.url);
-    return NextResponse.redirect(
-      `${requestUrl.origin}/login?error=auth_crash_${encodeURIComponent(err.message)}`
-    );
+    return NextResponse.redirect(`${requestUrl.origin}/login?error=auth_failed`);
   }
 }

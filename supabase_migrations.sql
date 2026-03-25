@@ -108,3 +108,27 @@ BEGIN
 EXCEPTION WHEN duplicate_object THEN
   NULL;
 END $$;
+
+DO $$
+BEGIN
+  CREATE POLICY "Service role can insert automation logs"
+    ON automation_logs FOR INSERT WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END $$;
+
+DO $$
+BEGIN
+  CREATE POLICY "No direct updates to automation logs"
+    ON automation_logs FOR UPDATE USING (false);
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END $$;
+
+DO $$
+BEGIN
+  CREATE POLICY "No direct deletes to automation logs"
+    ON automation_logs FOR DELETE USING (false);
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END $$;

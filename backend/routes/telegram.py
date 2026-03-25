@@ -22,12 +22,17 @@ import functools
 import logging
 import os
 import re
+import secrets
 from datetime import datetime, timezone as tz
 from email.utils import parsedate_to_datetime
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -894,7 +899,7 @@ async def _execute_email_send(chat_id: str, intent: dict,
 
     except Exception as e:
         logger.exception("[Telegram] Email send failed for chat_id=%s", chat_id)
-        await send_message(chat_id, f"❌ Email failed: {str(e)[:300]}")
+        await send_message(chat_id, "❌ Failed to send email. Please try again.")
 
 
 # ── Calendar delete flow ──────────────────────────────────────────────────────
@@ -936,7 +941,7 @@ async def _handle_calendar_delete(chat_id: str, intent: dict, user_id: str,
             )
         )
     except Exception as e:
-        await send_message(chat_id, f"❌ Could not fetch events: {str(e)[:200]}")
+        await send_message(chat_id, "❌ Could not fetch calendar events. Please try again.")
         return
 
     events = search_result.get("events", [])
@@ -1038,7 +1043,7 @@ async def _route_intent(chat_id: str, intent: dict, user_id: str,
     except Exception as e:
         logger.exception("[Telegram] NL execution failed for chat_id=%s", chat_id)
         _sessions.pop(chat_id, None)
-        await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
+        await send_message(chat_id, "❌ Command failed. Please try again.")
         return
 
     if isinstance(result, dict) and result.get("type") == "needs_disambiguation":
@@ -1197,8 +1202,16 @@ async def telegram_test(request: Request):
 # ── Main webhook ──────────────────────────────────────────────────────────────
 
 @router.post("/webhook")
+@limiter.limit("120/minute")
 async def telegram_webhook(request: Request):
     """Receive and route Telegram Bot API updates."""
+    # Verify the secret token Telegram sends in X-Telegram-Bot-Api-Secret-Token
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if webhook_secret:
+        incoming = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not secrets.compare_digest(incoming, webhook_secret):
+            return JSONResponse({"ok": False}, status_code=403)
+
     try:
         body = await request.json()
     except Exception:
@@ -1431,7 +1444,7 @@ async def telegram_webhook(request: Request):
                     await _send_long(chat_id, _format_nl_result(result, user_timezone))
                 except Exception as e:
                     _sessions.pop(chat_id, None)
-                    await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
+                    await send_message(chat_id, "❌ Command failed. Please try again.")
 
         # ── flow: continue / cancel (off-topic warning response) ─────────────
         elif cq_data == "flow:continue":
@@ -1559,7 +1572,7 @@ async def telegram_webhook(request: Request):
         supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
         url = (
             f"{supabase_url}/rest/v1/telegram_connections"
-            f"?verification_code=eq.{code}&verified_at=is.null&select=user_id"
+            f"?verification_code=eq.{code}&verified_at=is.null&select=user_id,updated_at"
         )
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url, headers=_sb_headers())
@@ -1567,6 +1580,17 @@ async def telegram_webhook(request: Request):
         if not rows:
             await send_message(chat_id, "❌ Invalid or expired code. Generate a fresh one from your dashboard.")
             return JSONResponse({"ok": True})
+        # Enforce 15-minute TTL on verification codes
+        updated_at_str = rows[0].get("updated_at") or ""
+        if updated_at_str:
+            try:
+                from datetime import timedelta
+                issued_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+                if datetime.now(tz.utc) - issued_at > timedelta(minutes=15):
+                    await send_message(chat_id, "❌ This code has expired. Generate a fresh one from your dashboard.")
+                    return JSONResponse({"ok": True})
+            except Exception:
+                pass  # If parsing fails, allow the code through
         user_id = rows[0]["user_id"]
         await _set_connection(user_id, {
             "chat_id": chat_id, "username": username,

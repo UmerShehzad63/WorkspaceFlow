@@ -24,11 +24,17 @@ def _ensure_configured():
 
 
 async def set_webhook(url: str) -> None:
-    """Register the webhook URL with the Telegram Bot API."""
+    """Register the webhook URL with the Telegram Bot API, including a secret token."""
     _ensure_configured()
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if not webhook_secret:
+        raise RuntimeError(
+            "TELEGRAM_WEBHOOK_SECRET is not set. "
+            "Generate a random secret and set it in your environment variables."
+        )
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
-        await bot.set_webhook(url=url)
-    logger.info("[Telegram] Webhook registered: %s", url)
+        await bot.set_webhook(url=url, secret_token=webhook_secret)
+    logger.info("[Telegram] Webhook registered with secret: %s", url)
 
 
 async def send_message(chat_id: str | int, text: str, reply_markup=None) -> dict | None:
