@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -39,7 +39,7 @@ function UpgradeModal({ plan, onClose }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '4px 6px' }}>✕</button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
 
           {/* FREE */}
           <div style={{ background: 'var(--color-surface-container-low)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', opacity: hasPro ? 0.5 : 1 }}>
@@ -185,6 +185,7 @@ export default function DashboardLayout({ children }) {
   const [plan,          setPlan]          = useState('free');
   const [loading,       setLoading]       = useState(true);
   const [showUpgrade,   setShowUpgrade]   = useState(false);
+  const [sidebarOpen,   setSidebarOpen]   = useState(false);
 
   useEffect(() => {
     const checkUser = async () => {
@@ -222,16 +223,32 @@ export default function DashboardLayout({ children }) {
   return (
     <PlanContext.Provider value={{ plan, openUpgrade: () => setShowUpgrade(true) }}>
     <CommandProvider>
-      <div className="dashboard-layout" style={{ paddingTop: 0 }}>
+      <div className="dashboard-layout">
+        {/* ── Mobile overlay backdrop ────────────────────────────────────── */}
+        {sidebarOpen && (
+          <div
+            onClick={() => setSidebarOpen(false)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+              zIndex: 49, backdropFilter: 'blur(2px)',
+            }}
+          />
+        )}
+
         {/* ── Sidebar ───────────────────────────────────────────────────── */}
-        <aside className="sidebar" style={{ top: 0 }}>
-          <div className="sidebar-header">
-            <Link href="/" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '9px', marginBottom: '8px' }}>
+        <aside className={`sidebar${sidebarOpen ? ' sidebar-open' : ''}`} style={{ top: 0 }}>
+          <div className="sidebar-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Link href="/" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '9px' }}>
               <img src="/icon.png" alt="CouchMail" width={36} height={36} style={{ objectFit: 'contain' }} />
               <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1.05rem', color: '#001857', letterSpacing: '-0.02em', lineHeight: 1 }}>
                 CouchMail
               </span>
             </Link>
+            <button
+              className="sidebar-close-btn"
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Close menu"
+            >✕</button>
           </div>
 
           {/* User info */}
@@ -286,7 +303,7 @@ export default function DashboardLayout({ children }) {
                 const isActive = pathname === item.href;
                 return (
                   <li key={idx}>
-                    <Link href={item.href} className={`sidebar-item ${isActive ? 'active' : ''}`}>
+                    <Link href={item.href} className={`sidebar-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                       <span className="icon">{item.icon}</span>
                       <span style={{ flex: 1 }}>{item.label}</span>
                       {item.badge && (
@@ -346,7 +363,19 @@ export default function DashboardLayout({ children }) {
         </aside>
 
         {/* ── Main content ───────────────────────────────────────────────── */}
-        <main className="dashboard-content" style={{ padding: 0 }}>
+        <main className="dashboard-content">
+          {/* Mobile top bar */}
+          <div className="mobile-topbar">
+            <button className="hamburger-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+              <span /><span /><span />
+            </button>
+            <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <img src="/icon.png" alt="CouchMail" width={30} height={30} style={{ objectFit: 'contain' }} />
+              <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1rem', color: '#001857', letterSpacing: '-0.02em' }}>CouchMail</span>
+            </Link>
+            <div style={{ width: 40 }} />
+          </div>
+
           <GlobalHeader />
           <div className="dashboard-inner">
             <DashboardShell>{children}</DashboardShell>
@@ -354,23 +383,28 @@ export default function DashboardLayout({ children }) {
         </main>
 
         {/* ── Mobile bottom nav ──────────────────────────────────────────── */}
-        <div className="mobile-bottom-nav">
+        <nav className="mobile-bottom-nav">
           <Link href="/dashboard/overview" className={pathname === '/dashboard/overview' ? 'active' : ''}>
-            <span className="nav-icon">📅</span>Dashboard
+            <span className="nav-icon">📅</span>
+            <span>Dashboard</span>
           </Link>
           <Link href="/dashboard/commands" className={pathname === '/dashboard/commands' ? 'active' : ''}>
-            <span className="nav-icon">💬</span>Commands
+            <span className="nav-icon">💬</span>
+            <span>Commands</span>
           </Link>
           <Link href="/dashboard/rules" className={pathname === '/dashboard/rules' ? 'active' : ''}>
-            <span className="nav-icon">🔄</span>Rules
+            <span className="nav-icon">🔄</span>
+            <span>Rules</span>
           </Link>
           <Link href="/dashboard/telegram" className={pathname === '/dashboard/telegram' ? 'active' : ''}>
-            <span className="nav-icon">✈️</span>Telegram
+            <span className="nav-icon">✈️</span>
+            <span>Telegram</span>
           </Link>
           <Link href="/dashboard/settings" className={pathname === '/dashboard/settings' ? 'active' : ''}>
-            <span className="nav-icon">⚙️</span>Settings
+            <span className="nav-icon">⚙️</span>
+            <span>Settings</span>
           </Link>
-        </div>
+        </nav>
       </div>
 
       {showUpgrade && <UpgradeModal plan={plan} onClose={() => setShowUpgrade(false)} />}
