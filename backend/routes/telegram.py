@@ -1977,7 +1977,7 @@ async def telegram_webhook(request: Request):
             briefing = await generate_briefing_summary(raw_data)
             if not isinstance(briefing, dict) or "schedule" not in briefing:
                 raise ValueError("Unexpected briefing format")
-            await _send_long(chat_id, format_briefing_telegram(briefing))
+            await _send_long(chat_id, format_briefing_telegram(briefing, raw_data))
         except Exception:
             logger.exception("[Telegram] Briefing failed for chat_id=%s", chat_id)
             await send_message(chat_id, "⚠️ Something went wrong. Please try again.")
