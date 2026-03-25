@@ -8,6 +8,7 @@ import ResultDisplay from './components/ResultDisplay';
 import TelegramConnect from './components/TelegramConnect';
 import { CommandProvider, useCommand } from './command-context';
 import { PlanContext, isPro } from './plan-context';
+import CouchMailIcon from '@/app/components/CouchMailIcon';
 
 const SERVICE_ICONS = { Gmail: '📧', Calendar: '📅', Drive: '📁' };
 
@@ -213,7 +214,7 @@ export default function DashboardLayout({ children }) {
   if (loading) {
     return (
       <div className="loading-screen" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface)', gap: '10px', opacity: 0.5 }}>
-        <img src="/logo.png" alt="CouchMail" style={{ height: '40px', width: 'auto', objectFit: 'contain' }} />
+        <CouchMailIcon size={40} />
         <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1.2rem', color: '#001857' }}>CouchMail</span>
       </div>
     );
@@ -227,7 +228,7 @@ export default function DashboardLayout({ children }) {
         <aside className="sidebar" style={{ top: 0 }}>
           <div className="sidebar-header">
             <Link href="/" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '9px', marginBottom: '8px' }}>
-              <img src="/logo.png" alt="CouchMail" width={36} height={36} style={{ objectFit: 'contain' }} />
+              <CouchMailIcon size={36} />
               <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1.05rem', color: '#001857', letterSpacing: '-0.02em', lineHeight: 1 }}>
                 CouchMail
               </span>

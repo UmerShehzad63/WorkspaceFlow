@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import styles from './login.module.css';
+import CouchMailIcon from '@/app/components/CouchMailIcon';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,7 +33,7 @@ export default function LoginPage() {
     <div className="auth-page">
       <div className="auth-card">
         <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '32px' }}>
-          <img src="/logo.png" alt="CouchMail" style={{ height: '52px', width: '52px', objectFit: 'contain' }} />
+          <CouchMailIcon size={52} />
           <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1.6rem', color: '#001857', letterSpacing: '-0.02em', lineHeight: 1 }}>
             CouchMail
           </span>
