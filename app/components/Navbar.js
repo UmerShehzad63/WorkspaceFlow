@@ -1,55 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-
-function CouchMailLogo({ size = 36 }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
-      {/* Circular CM icon */}
-      <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="20" cy="20" r="19" stroke="#5644d0" strokeWidth="1.5" fill="none" opacity="0.7" />
-        <circle cx="20" cy="20" r="19" stroke="url(#logoGrad)" strokeWidth="1.5" fill="none" />
-        {/* C shape */}
-        <path
-          d="M22 13 C17 13 13 16.5 13 20.5 C13 24.5 17 28 22 28"
-          stroke="url(#logoGrad)"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          fill="none"
-        />
-        {/* M shape */}
-        <path
-          d="M20 27 L20 16 L24.5 21 L29 16 L29 27"
-          stroke="url(#logoGrad)"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        {/* Center dot */}
-        <circle cx="24.5" cy="21" r="1.5" fill="#5644d0" />
-        <defs>
-          <linearGradient id="logoGrad" x1="8" y1="10" x2="32" y2="30" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#7264e8" />
-            <stop offset="100%" stopColor="#001857" />
-          </linearGradient>
-        </defs>
-      </svg>
-
-      {/* Wordmark */}
-      <span style={{
-        fontFamily: "'Manrope', 'Inter', sans-serif",
-        fontWeight: 800,
-        fontSize: '1.2rem',
-        color: '#001857',
-        letterSpacing: '-0.02em',
-        lineHeight: 1,
-      }}>
-        CouchMail
-      </span>
-    </div>
-  );
-}
+import Image from 'next/image';
 
 export default function Navbar({ transparent = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -58,8 +10,18 @@ export default function Navbar({ transparent = false }) {
     <>
       <nav className="navbar" style={transparent ? { background: 'transparent', borderBottom: 'none' } : {}}>
         <div className="container">
-          <Link href="/" style={{ textDecoration: 'none' }}>
-            <CouchMailLogo size={36} />
+          <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Image src="/logo.png" alt="CouchMail" width={44} height={44} style={{ objectFit: 'contain' }} priority />
+            <span style={{
+              fontFamily: "'Manrope', 'Inter', sans-serif",
+              fontWeight: 800,
+              fontSize: '1.25rem',
+              color: '#001857',
+              letterSpacing: '-0.02em',
+              lineHeight: 1,
+            }}>
+              CouchMail
+            </span>
           </Link>
 
           <ul className="nav-links">
