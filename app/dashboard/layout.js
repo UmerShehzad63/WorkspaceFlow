@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import GlobalHeader from './components/GlobalHeader';
 import ResultDisplay from './components/ResultDisplay';
+import { briefingCache } from '@/lib/briefingCache';
 import TelegramConnect from './components/TelegramConnect';
 import { CommandProvider, useCommand } from './command-context';
 import { PlanContext, isPro } from './plan-context';
@@ -200,6 +201,17 @@ export default function DashboardLayout({ children }) {
         .single();
       setPlan((profile?.plan || 'free').toLowerCase());
       setLoading(false);
+
+      // Background prefetch briefing data so dashboard loads instantly when visited
+      if (briefingCache.isEmpty() || briefingCache.isStale()) {
+        const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+        fetch(`${BACKEND}/api/briefing`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (data) briefingCache.set(data); })
+          .catch(() => {});
+      }
     };
     checkUser();
 

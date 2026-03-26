@@ -86,8 +86,11 @@ def _fetch_emails_batched(access_token, refresh_token, cutoff_ms):
     authed_http  = _build_authed_http(access_token, refresh_token, timeout=30)
     gmail        = build('gmail', 'v1', http=authed_http, cache_discovery=False)
 
+    # Exclude promotions, social, updates, forums — primary inbox only
     msgs_result  = gmail.users().messages().list(
-        userId='me', q='is:unread', maxResults=20
+        userId='me',
+        q='is:unread -category:promotions -category:social -category:updates -category:forums',
+        maxResults=20,
     ).execute()
     messages = msgs_result.get('messages', [])
 
