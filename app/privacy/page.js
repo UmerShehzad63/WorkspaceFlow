@@ -17,7 +17,7 @@ export default function PrivacyPage() {
             Privacy Policy
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '48px' }}>
-            Last updated: March 26, 2026
+            Last updated: March 27, 2026
           </p>
 
           <Section title="1. Introduction">
@@ -35,20 +35,22 @@ export default function PrivacyPage() {
             </ul>
           </Section>
 
-          <Section title="3. Google Limited Use Disclosure">
-            <p style={{ background: 'rgba(86,68,208,0.05)', border: '1px solid rgba(86,68,208,0.2)', borderRadius: '10px', padding: '16px 20px', lineHeight: 1.7 }}>
+          <Section title="3. Google API Disclosure">
+            <p style={{ background: 'rgba(86,68,208,0.08)', border: '2px solid rgba(86,68,208,0.3)', borderRadius: '10px', padding: '18px 22px', lineHeight: 1.8, fontWeight: 500 }}>
               CouchMail's use and transfer to any other app of information received from Google APIs will adhere to the{' '}
-              <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-secondary)', fontWeight: 600 }}>
+              <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-secondary)', fontWeight: 700 }}>
                 Google API Services User Data Policy
               </a>
-              , including the Limited Use requirements. Specifically:
+              , including the Limited Use requirements.
             </p>
+            <p>CouchMail accesses Gmail, Google Drive, and Google Calendar solely to provide automation features — specifically: sending and reading emails, managing calendar events, and referencing Drive files. We access the minimum data required to fulfil each action you request.</p>
+            <p>The following restrictions apply to all Google user data we receive:</p>
             <ul>
-              <li>We only request access to Google user data that is necessary to provide the features of CouchMail.</li>
-              <li>We do not use Google user data to serve advertisements.</li>
-              <li>We do not allow humans to read Google user data unless you have given explicit permission, it is necessary for security purposes, or we are required to do so by law.</li>
-              <li>We do not sell, transfer, or share Google user data with third parties except as necessary to provide and improve the Service, or as required by law.</li>
-              <li>We do not use Google user data for any purpose other than providing or improving user-facing features.</li>
+              <li><strong>No data sales:</strong> We do not sell user data to third parties under any circumstances.</li>
+              <li><strong>No advertising:</strong> We do not use user data for serving advertisements and we do not allow advertising networks to access your data.</li>
+              <li><strong>No human access:</strong> We do not allow humans to read user data unless you have given us explicit agreement for a specific message (for example, when you contact us for technical support and share content to diagnose an issue), or it is required for security purposes, or we are compelled by law.</li>
+              <li><strong>Limited use:</strong> We do not use Google user data for any purpose other than providing or improving the user-facing features of CouchMail that are clearly visible to you when you use the Service.</li>
+              <li><strong>No unauthorised transfer:</strong> We do not transfer Google user data to third parties except as strictly necessary to operate the Service (e.g. sending a message through Gmail on your behalf), or as required by law.</li>
             </ul>
           </Section>
 
