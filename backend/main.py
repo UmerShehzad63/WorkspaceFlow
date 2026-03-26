@@ -300,6 +300,11 @@ async def run_command(request: Request):
             params.get("file") or params.get("filename") or ""
         ).strip()
         file_id_override = (overrides.get("file_id") or "").strip()
+        skip_attachment  = bool(overrides.get("skip_attachment"))
+        if skip_attachment:
+            drive_filename = ""
+            params.pop("drive_file", None)
+            params.pop("attachment", None)
         if drive_filename and not file_id_override:
             from command_executor import find_file_candidates, _build_creds, _GDRIVE_TYPE_LABELS
             loop2 = asyncio.get_event_loop()
@@ -316,14 +321,14 @@ async def run_command(request: Request):
                 return {
                     "intent": intent,
                     "result": {
-                        "type": "needs_disambiguation",
-                        "kind": "file",
-                        "query": drive_filename,
-                        "candidates": [],
+                        "type": "error",
+                        "error": f"No file named \"{drive_filename}\" found in your Google Drive. "
+                                 "You can try a different name or send the email without an attachment.",
+                        "allow_skip_attachment": True,
                         "current_overrides": {**overrides, "recipient_email": to},
                     },
                     "preview_only": False,
-                    "needs_disambiguation": True,
+                    "needs_disambiguation": False,
                 }
             if len(file_cands) > 1:
                 return {

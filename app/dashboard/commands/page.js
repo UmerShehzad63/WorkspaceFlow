@@ -74,7 +74,7 @@ export default function CommandsPage() {
         return;
       }
 
-      if (data.needs_disambiguation) {
+      if (data.needs_disambiguation || data.result?.allow_skip_attachment) {
         setPendingCommand({ command: commandText, overrides });
         setResultState({ intent: data.intent, result: data.result });
         return;
@@ -150,11 +150,12 @@ export default function CommandsPage() {
 
   const service    = resultState?.intent?.service;
   const action     = resultState?.intent?.action;
-  const isDisambig = resultState?.result?.type === 'needs_disambiguation';
-  const badgeLabel = resultState?.error ? 'Error' : (isDisambig ? 'Choose' : (resultState?.result ? 'Done' : null));
+  const isDisambig  = resultState?.result?.type === 'needs_disambiguation';
+  const isFileError = resultState?.result?.type === 'error' && resultState?.result?.allow_skip_attachment;
+  const badgeLabel  = resultState?.error ? 'Error' : (isDisambig || isFileError ? 'Action needed' : (resultState?.result ? 'Done' : null));
   const badgeStyle = resultState?.error
     ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444' }
-    : isDisambig
+    : (isDisambig || isFileError)
     ? { background: 'rgba(251,191,36,0.1)', color: '#f59e0b' }
     : { background: 'rgba(52,211,153,0.1)', color: 'var(--accent-green)' };
 
@@ -214,7 +215,9 @@ export default function CommandsPage() {
             <div className={styles.resultCard}>
               <div className={styles.resultHeader}>
                 <h3>
-                  {isDisambig
+                  {isFileError
+                    ? '📁 File Not Found'
+                    : isDisambig
                     ? (resultState.result.kind === 'recipient' ? '👤 Confirm Recipient' : '📁 Select File')
                     : `${SERVICE_ICONS[service] || '⚡'} ${service}: ${action}`}
                 </h3>
