@@ -70,9 +70,9 @@ export async function GET(request) {
         .eq('id', userId);
       if (updateErr) console.error('Token update error:', updateErr.message);
 
-      // If setup is done, go straight to dashboard — skip setup wizard
+      // If setup is done, go straight to command bar — skip setup wizard
       if (existingProfile.setup_completed) {
-        return NextResponse.redirect(`${requestUrl.origin}/dashboard`);
+        return NextResponse.redirect(`${requestUrl.origin}/dashboard/commands`);
       }
       return NextResponse.redirect(`${requestUrl.origin}/setup`);
     }

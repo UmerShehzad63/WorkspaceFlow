@@ -253,7 +253,11 @@ ROUTING RULES — follow in strict priority order:
 
 3. GMAIL SEND rules:
    - "to" = name or email exactly as given (system resolves names to emails)
-   - "drive_file" = filename when user says "send/email [file] to [person]"
+   - "drive_file" = filename/document type when user wants to ATTACH a file from Google Drive
+   - CRITICAL: "send [noun] to [person]" — the noun IS the file to attach (drive_file), NOT email body text
+   - CRITICAL: "send [noun] to [person]" patterns where noun = document/file type ALWAYS set drive_file
+   - Document/file keywords that ALWAYS mean drive_file: transcript, resume, cv, report, invoice, proposal,
+     contract, document, doc, file, pdf, presentation, slides, spreadsheet, form, certificate, letter, portfolio
    - NEVER invent body or subject — omit if not specified in command
    - NEVER put file content in body
 
@@ -263,12 +267,20 @@ ROUTING RULES — follow in strict priority order:
    - browse web → "I can't browse the web, but I can search your Gmail, Calendar, or Drive."
    - other → explain what IS possible with Gmail / Calendar / Drive
 
-5. IMPORTANT EXAMPLES:
+5. IMPORTANT EXAMPLES — memorize these patterns:
+   "send transcript to umer"               → Gmail/Send, to="umer", drive_file="transcript"
+   "send my transcript to umer"            → Gmail/Send, to="umer", drive_file="transcript"
+   "email my resume to sarah"              → Gmail/Send, to="sarah", drive_file="resume"
+   "send the report to john"               → Gmail/Send, to="john", drive_file="report"
+   "send invoice to client@gmail.com"      → Gmail/Send, to="client@gmail.com", drive_file="invoice"
+   "email cv to recruiter"                 → Gmail/Send, to="recruiter", drive_file="cv"
+   "send proposal to the team"             → Gmail/Send, to="the team", drive_file="proposal"
    "how many meetings do I have next week" → Calendar/List, date_range_start="{next_monday}T00:00:00", date_range_end="{next_sunday}T23:59:59", query=null
    "what's on my calendar today"           → Calendar/List, date_range_start="{today_iso}T00:00:00", date_range_end="{today_iso}T23:59:59"
    "find emails from sarah about project"  → Gmail/Search, from="sarah", query="project"
    "download my cv"                        → Unsupported, helpful response_message
-   "send my cv to john"                    → Gmail/Send, to="john", drive_file="cv"
+   "email john that the meeting is at 3pm" → Gmail/Send, to="john", NO drive_file (no document noun)
+   "tell sarah the proposal is ready"      → Gmail/Send, to="sarah", NO drive_file (no physical file)
    "schedule standup tomorrow 9am"         → Calendar/Create, summary="Standup", start_time="{tomorrow}T09:00:00"
    "remind me about the budget review at 3pm" → Calendar/Create, summary="Budget review reminder", start_time="{today_iso}T15:00:00"
    "archive all newsletters"               → Gmail/Archive, query="newsletter"

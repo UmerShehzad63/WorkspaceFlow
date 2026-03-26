@@ -130,11 +130,11 @@ export default function WelcomePage() {
             </button>
           )}
           <button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => router.push('/dashboard/commands')}
             className="btn btn-ghost"
             style={{ width: '100%', border: 'none', fontFamily: 'inherit', cursor: 'pointer' }}
           >
-            {prefetchDone ? 'Dashboard is ready →' : 'Go to Dashboard →'}
+            {prefetchDone ? 'Start using CouchMail →' : 'Go to Command Bar →'}
           </button>
         </div>
 
