@@ -235,26 +235,44 @@ async def run_command(request: Request):
     if len(command) > 500:
         raise HTTPException(status_code=400, detail="Command too long (max 500 characters)")
 
-    # ── Plan check + daily limit for free users ───────────────────────────────
-    sb_url_cmd  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    svc_key_cmd = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    prof_url_cmd = (
-        f"{sb_url_cmd}/rest/v1/profiles"
-        f"?id=eq.{user_id}&select=plan,cmd_daily_count,cmd_daily_date"
+    # ── Fetch profile + parse intent IN PARALLEL (saves ~300ms) ─────────────
+    import datetime as _dt
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    # Single profile fetch covers plan check + Google tokens — no second round-trip
+    profile_url  = (
+        f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}"
+        f"&select=plan,cmd_daily_count,cmd_daily_date,google_access_token,google_refresh_token,timezone"
     )
-    svc_hdr_cmd = {"Authorization": f"Bearer {svc_key_cmd}", "apikey": svc_key_cmd}
-    async with httpx.AsyncClient(timeout=10.0) as _cl:
-        _pr = await _cl.get(prof_url_cmd, headers=svc_hdr_cmd)
-        _profiles_cmd = _pr.json() if _pr.status_code == 200 else []
-    _cmd_plan = ((_profiles_cmd[0].get("plan") or "free") if _profiles_cmd else "free").lower()
-    _PRO_CMD   = {"pro", "pro_plus", "trialing", "pro_trial", "active"}
+    svc_headers  = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+
+    async def _fetch_profile():
+        async with httpx.AsyncClient(timeout=10.0) as _cl:
+            r = await _cl.get(profile_url, headers=svc_headers)
+            return r.json() if r.status_code == 200 else []
+
+    # Run profile fetch and intent parsing concurrently
+    profiles, intent = await asyncio.gather(
+        _fetch_profile(),
+        parse_command_intent(command, user_timezone=req_timezone),
+    )
+
+    if not isinstance(intent, dict) or "service" not in intent:
+        raise HTTPException(status_code=503, detail="AI service unavailable. Try again shortly.")
+
+    if not profiles:
+        raise HTTPException(status_code=404, detail="User profile not found")
+
+    profile       = profiles[0]
+    _cmd_plan     = (profile.get("plan") or "free").lower()
+    _PRO_CMD      = {"pro", "pro_plus", "trialing", "pro_trial", "active"}
+
+    # ── Free-plan daily command limit ─────────────────────────────────────────
     if _cmd_plan not in _PRO_CMD:
         FREE_DAILY_LIMIT = 5
-        import datetime as _dt
         _today = str(_dt.date.today())
-        _prof  = _profiles_cmd[0] if _profiles_cmd else {}
-        _count = _prof.get("cmd_daily_count") or 0
-        _date  = _prof.get("cmd_daily_date") or ""
+        _count = profile.get("cmd_daily_count") or 0
+        _date  = profile.get("cmd_daily_date") or ""
         if _date != _today:
             _count = 0
         if _count >= FREE_DAILY_LIMIT:
@@ -262,37 +280,20 @@ async def run_command(request: Request):
                 status_code=429,
                 detail=f"Free plan limit: {FREE_DAILY_LIMIT} commands per day. Upgrade to Pro for unlimited."
             )
-        # Increment counter — best-effort, non-blocking
-        _new_count = _count + 1
-        _patch_url = f"{sb_url_cmd}/rest/v1/profiles?id=eq.{user_id}"
-        _patch_hdr = {**svc_hdr_cmd, "Content-Type": "application/json", "Prefer": "return=minimal"}
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as _pcl:
-                await _pcl.patch(
-                    _patch_url,
-                    headers=_patch_hdr,
-                    json={"cmd_daily_count": _new_count, "cmd_daily_date": _today},
-                )
-        except Exception:
-            pass  # non-critical
+        # Increment counter best-effort in background
+        async def _patch_count():
+            try:
+                _patch_hdr = {**svc_headers, "Content-Type": "application/json", "Prefer": "return=minimal"}
+                async with httpx.AsyncClient(timeout=5.0) as _pcl:
+                    await _pcl.patch(
+                        f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}",
+                        headers=_patch_hdr,
+                        json={"cmd_daily_count": _count + 1, "cmd_daily_date": _today},
+                    )
+            except Exception:
+                pass
+        asyncio.ensure_future(_patch_count())
 
-    intent = await parse_command_intent(command, user_timezone=req_timezone)
-    if not isinstance(intent, dict) or "service" not in intent:
-        raise HTTPException(status_code=503, detail="AI service unavailable. Try again shortly.")
-
-    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    profile_url  = f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token,timezone"
-    g_headers    = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp     = await client.get(profile_url, headers=g_headers)
-        profiles = resp.json() if resp.status_code == 200 else []
-
-    if not profiles:
-        raise HTTPException(status_code=404, detail="User profile not found")
-
-    profile       = profiles[0]
     access_token  = profile.get("google_access_token")
     refresh_token = profile.get("google_refresh_token")
     user_timezone = profile.get("timezone") or "UTC"
@@ -836,33 +837,39 @@ async def create_automation(request: Request):
     user_id = user["id"]
     data    = await request.json()
 
-    # Plan limit check
+    # Plan + automation count check — fetch both IN PARALLEL
     sb_url  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    profile_url = f"{sb_url}/rest/v1/profiles?id=eq.{user_id}&select=plan"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        presp    = await client.get(profile_url, headers=_sb_service_headers())
-        profiles = presp.json() if presp.status_code == 200 else []
-    plan = (profiles[0].get("plan") or "free").lower() if profiles else "free"
-
     PRO_PLANS = {"pro", "pro_plus", "trialing", "pro_trial", "active"}
 
-    # Determine per-plan automation limit
-    if plan == "pro_plus":
-        limit = None        # unlimited
-    elif plan in PRO_PLANS:
-        limit = 10          # pro / trialing / pro_trial / active
-    else:
-        limit = 2           # free — only active automations count
+    async def _get_plan():
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(f"{sb_url}/rest/v1/profiles?id=eq.{user_id}&select=plan", headers=_sb_service_headers())
+            rows = r.json() if r.status_code == 200 else []
+            return (rows[0].get("plan") or "free").lower() if rows else "free"
 
-    # Count automations (active-only for free, all for paid)
+    async def _get_all_count():
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&select=id", headers=_sb_service_headers())
+            return r.json() if r.status_code == 200 else []
+
+    async def _get_active_count():
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&is_active=eq.true&select=id", headers=_sb_service_headers())
+            return r.json() if r.status_code == 200 else []
+
+    plan, all_autos, active_autos = await asyncio.gather(
+        _get_plan(), _get_all_count(), _get_active_count()
+    )
+
+    if plan == "pro_plus":
+        limit = None
+    elif plan in PRO_PLANS:
+        limit = 10
+    else:
+        limit = 2
+
     if limit is not None:
-        if plan not in PRO_PLANS:
-            count_url = f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&is_active=eq.true&select=id"
-        else:
-            count_url = f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&select=id"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            cresp   = await client.get(count_url, headers=_sb_service_headers())
-            current = cresp.json() if cresp.status_code == 200 else []
+        current = active_autos if plan not in PRO_PLANS else all_autos
         if len(current) >= limit:
             if plan not in PRO_PLANS:
                 raise HTTPException(status_code=403, detail=f"Free plan limit is {limit} active automations. Upgrade to Pro for more.")

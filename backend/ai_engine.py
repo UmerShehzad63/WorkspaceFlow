@@ -6,44 +6,56 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = "gpt-4o-mini"
 OPENAI_BASE_URL = "https://api.openai.com/v1/chat/completions"
 
+# Persistent client — avoids per-request SSL handshake overhead
+_http_client: httpx.AsyncClient | None = None
 
-async def _call_openai(messages: list):
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _http_client
+
+
+async def _call_openai(messages: list, max_tokens: int = 600):
     """Call OpenAI chat completions API."""
     if not OPENAI_API_KEY:
         return {"error": "OPENAI_API_KEY not configured"}
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                OPENAI_BASE_URL,
-                json={
-                    "model": OPENAI_MODEL,
-                    "messages": messages,
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.3,
-                    "max_tokens": 2048,
-                },
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-            )
+        client = _get_http_client()
+        response = await client.post(
+            OPENAI_BASE_URL,
+            json={
+                "model": OPENAI_MODEL,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+                "temperature": 0.3,
+                "max_tokens": max_tokens,
+            },
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
 
-            if response.status_code == 429:
-                return {"error": "OpenAI rate limit hit. Try again shortly."}
+        if response.status_code == 429:
+            return {"error": "OpenAI rate limit hit. Try again shortly."}
 
-            response.raise_for_status()
+        response.raise_for_status()
 
-            try:
-                result = response.json()
-                content = result["choices"][0]["message"]["content"]
-            except (json.JSONDecodeError, KeyError, IndexError) as e:
-                return {"raw": response.text, "error": f"Unexpected OpenAI response format: {e}"}
+        try:
+            result = response.json()
+            content = result["choices"][0]["message"]["content"]
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            return {"raw": response.text, "error": f"Unexpected OpenAI response format: {e}"}
 
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                return {"raw": content, "error": "OpenAI returned non-JSON content"}
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return {"raw": content, "error": "OpenAI returned non-JSON content"}
 
     except httpx.HTTPStatusError as e:
         print(f"[OpenAI] HTTP error: {e.response.status_code}")
@@ -163,7 +175,7 @@ ABSOLUTE RULES:
         },
         {"role": "user", "content": prompt},
     ]
-    return await _call_openai(messages)
+    return await _call_openai(messages, max_tokens=900)
 
 
 async def parse_command_intent(command: str, user_timezone: str = "UTC"):
@@ -329,28 +341,28 @@ MORE EXAMPLES
     return await _call_openai(messages)
 
 
-async def _call_openai_text(messages: list) -> str:
+async def _call_openai_text(messages: list, max_tokens: int = 800) -> str:
     """Call OpenAI without JSON response format enforcement. Returns raw text."""
     if not OPENAI_API_KEY:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                OPENAI_BASE_URL,
-                json={
-                    "model": OPENAI_MODEL,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 1024,
-                },
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]["content"].strip()
+        client = _get_http_client()
+        response = await client.post(
+            OPENAI_BASE_URL,
+            json={
+                "model": OPENAI_MODEL,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+            },
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"[OpenAI Text] Error: {e}")
         return ""
