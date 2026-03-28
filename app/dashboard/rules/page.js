@@ -133,6 +133,18 @@ const TEMPLATE_CATEGORIES = [
         schedule: (f) => `Daily at ${f.send_time || '08:00'}`,
       },
       {
+        id: 'gmail-morning-triage',
+        name: 'Morning triage — unread emails needing attention',
+        desc: 'Every morning, get an email listing your unread messages so you know exactly what needs action today',
+        icon: '☀️',
+        fields: [
+          { key: 'send_time', label: 'Send triage at', type: 'time', placeholder: '07:30' },
+          { key: 'max_emails', label: 'Max emails to include', type: 'number', placeholder: '10' },
+        ],
+        summary: (f) => `Every morning at ${f.send_time || '07:30'}, emails you the top ${f.max_emails || '10'} unread messages needing attention.`,
+        schedule: (f) => `Daily at ${f.send_time || '07:30'}`,
+      },
+      {
         id: 'gmail-escalate',
         name: 'Escalate urgent emails if not replied in X hours',
         desc: 'Alert or forward if an urgent email hasn\'t been replied to within a set time',
@@ -167,6 +179,17 @@ const TEMPLATE_CATEGORIES = [
         ],
         summary: (f) => `Emails all attendees ${f.minutes_before || '30'} minutes before each meeting.`,
         schedule: 'Before each meeting',
+      },
+      {
+        id: 'cal-daily-agenda',
+        name: 'Email me my daily calendar agenda',
+        desc: 'Every morning, receive a clean summary of all your events for the day so you\'re always prepared',
+        icon: '📆',
+        fields: [
+          { key: 'send_time', label: 'Send agenda at', type: 'time', placeholder: '07:00' },
+        ],
+        summary: (f) => `Every morning at ${f.send_time || '07:00'}, emails you today's full calendar agenda.`,
+        schedule: (f) => `Daily at ${f.send_time || '07:00'}`,
       },
       {
         id: 'cal-auto-create',
@@ -405,6 +428,24 @@ const TEMPLATE_CATEGORIES = [
     ],
   },
 ];
+
+// ─── Popular templates (shown as first section) ─────────────────────────────
+
+const POPULAR_TEMPLATE_IDS = [
+  'gmail-archive-newsletters',
+  'gmail-receipts',
+  'gmail-vip-flag',
+  'gmail-morning-triage',
+  'cal-daily-agenda',
+  'gmail-followup',
+  'cal-focus-time',
+  'gmail-daily-digest',
+];
+
+const ALL_TEMPLATES = TEMPLATE_CATEGORIES.flatMap((c) => c.templates);
+const POPULAR_TEMPLATES = POPULAR_TEMPLATE_IDS
+  .map((id) => ALL_TEMPLATES.find((t) => t.id === id))
+  .filter(Boolean);
 
 // ─── Tag Input Component ────────────────────────────────────────────────────
 
@@ -877,8 +918,7 @@ export default function AutomationsPage() {
   };
 
   const handleEdit = (auto) => {
-    const allTemplates = TEMPLATE_CATEGORIES.flatMap((c) => c.templates);
-    const template = allTemplates.find((t) => t.id === auto.templateId);
+    const template = ALL_TEMPLATES.find((t) => t.id === auto.templateId);
     if (template) setEditingAutomation({ automation: auto, template });
   };
 
@@ -1070,6 +1110,32 @@ export default function AutomationsPage() {
       {/* Templates Tab */}
       {activeTab === 'templates' && (
         <div className={styles.templatesList}>
+          {/* ── Popular section ─────────────────────────────── */}
+          <div className={styles.categorySection}>
+            <div className={styles.categoryHeader}>
+              <span className={styles.categoryIcon}>⭐</span>
+              <h3 className={styles.categoryLabel}>Popular</h3>
+              <span className={styles.categoryCount}>{POPULAR_TEMPLATES.length}</span>
+            </div>
+            <div className={styles.templatesGrid}>
+              {POPULAR_TEMPLATES.map((tpl) => (
+                <div key={tpl.id} className={styles.templateCard}>
+                  <div className={styles.templateIcon}>{tpl.icon}</div>
+                  <h4>{tpl.name}</h4>
+                  <p>{tpl.desc}</p>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{ width: '100%', marginTop: '12px' }}
+                    onClick={() => setSetupTemplate(tpl)}
+                  >
+                    Use Template
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Category sections ────────────────────────────── */}
           {TEMPLATE_CATEGORIES.map((cat) => (
             <div key={cat.id} className={styles.categorySection}>
               <div className={styles.categoryHeader}>

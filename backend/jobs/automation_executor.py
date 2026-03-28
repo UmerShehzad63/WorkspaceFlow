@@ -429,6 +429,122 @@ def _exec_cal_focus_time(fv: dict, tok: str, rtok: str, _last: str | None) -> di
     return {"items": 1, "message": f"Created focus block: '{result.get('title', event_title)}'"}
 
 
+def _exec_gmail_auto_label(fv: dict, tok: str, rtok: str, last_run: str | None) -> dict:
+    """Apply a Gmail label to emails matching a sender, keyword, or domain."""
+    from command_executor import gmail_search
+    match_by    = (fv.get("match_by") or "Sender").lower()
+    match_value = (fv.get("match_value") or "").strip()
+    label_name  = (fv.get("label_name") or "").strip()
+    if not match_value or not label_name:
+        return {"items": 0, "message": "Missing match value or label name"}
+
+    if match_by == "sender":
+        query = f"from:{match_value} in:inbox{_after_ts(last_run)}"
+    elif match_by == "domain":
+        domain = match_value.lstrip("@")
+        query  = f"from:@{domain} in:inbox{_after_ts(last_run)}"
+    else:  # keyword
+        query = f'"{match_value}" in:inbox{_after_ts(last_run)}'
+
+    result = gmail_search(tok, rtok, query, max_results=25)
+    msgs   = result.get("messages", [])
+    if not msgs:
+        return {"items": 0, "message": "No matching emails found"}
+
+    label_id = _get_or_create_label(tok, rtok, label_name)
+    done = 0
+    for msg in msgs:
+        msg_id = msg.get("id")
+        if msg_id:
+            _gmail_modify(tok, rtok, msg_id, add_labels=[label_id])
+            done += 1
+    return {"items": done, "message": f"Applied label '{label_name}' to {done} email(s)"}
+
+
+def _exec_gmail_morning_triage(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
+    """Send a morning email listing unread messages that need attention today."""
+    from command_executor import gmail_search, gmail_send
+    max_emails = int(fv.get("max_emails") or 10)
+
+    query  = "is:unread in:inbox newer_than:1d"
+    result = gmail_search(tok, rtok, query, max_results=max_emails)
+    msgs   = result.get("messages", [])
+
+    user_email = _get_user_email(tok, rtok)
+    if not user_email:
+        return {"items": 0, "message": "Could not determine user email"}
+
+    today_str = datetime.now(tz.utc).strftime("%A, %B %d")
+    if not msgs:
+        subject = f"☀️ Morning Triage ({today_str}) — Inbox clear!"
+        body    = "Great news — no unread emails from the last 24 hours. Enjoy a clear start to your day!"
+    else:
+        lines = [f"Good morning! Here are {len(msgs)} unread email(s) needing your attention:\n"]
+        for i, m in enumerate(msgs, 1):
+            sender  = m.get("from", "Unknown")
+            subj    = m.get("subject", "(no subject)")
+            snippet = (m.get("snippet") or "")[:100]
+            lines.append(f"{i}. FROM: {sender}")
+            lines.append(f"   SUBJECT: {subj}")
+            if snippet:
+                lines.append(f"   PREVIEW: {snippet}...")
+            lines.append("")
+        lines.append("—\nSent by WorkspaceFlow Morning Triage automation.")
+        subject = f"☀️ Morning Triage ({today_str}) — {len(msgs)} email(s) need attention"
+        body    = "\n".join(lines)
+
+    gmail_send(tok, rtok, user_email, subject, body)
+    return {"items": len(msgs), "message": f"Morning triage sent — {len(msgs)} email(s) listed"}
+
+
+def _exec_cal_daily_agenda(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
+    """Email the user a clean summary of their calendar events for today."""
+    from command_executor import calendar_search, gmail_send
+
+    now   = datetime.now(tz.utc)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    end   = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
+
+    result = calendar_search(tok, rtok, time_min=start, time_max=end, max_results=20)
+    events = result.get("events", [])
+
+    user_email = _get_user_email(tok, rtok)
+    if not user_email:
+        return {"items": 0, "message": "Could not determine user email"}
+
+    today_str = now.strftime("%A, %B %d, %Y")
+    if not events:
+        subject = f"📅 Your Agenda — {today_str} — No events"
+        body    = f"You have no scheduled events today ({today_str}). Enjoy a free day!"
+    else:
+        lines = [f"Here's your agenda for {today_str}:\n"]
+        for ev in events:
+            title    = ev.get("title", "Untitled")
+            start_dt = ev.get("start", "")
+            end_dt   = ev.get("end", "")
+            location = ev.get("location", "")
+            attendees = ev.get("attendees") or []
+            try:
+                s_dt     = datetime.fromisoformat(start_dt.replace("Z", "+00:00"))
+                e_dt     = datetime.fromisoformat(end_dt.replace("Z", "+00:00"))
+                time_str = f"{s_dt.strftime('%I:%M %p')} – {e_dt.strftime('%I:%M %p')}"
+            except Exception:
+                time_str = start_dt or "All day"
+            lines.append(f"• {time_str}  {title}")
+            if location:
+                lines.append(f"  📍 {location}")
+            if attendees:
+                names = [a if isinstance(a, str) else a.get("email", "") for a in attendees[:3]]
+                lines.append(f"  👥 {', '.join(n for n in names if n)}")
+        lines.append(f"\n{len(events)} event(s) total.")
+        lines.append("—\nSent by WorkspaceFlow Daily Agenda automation.")
+        subject = f"📅 Your Agenda — {today_str} — {len(events)} event(s)"
+        body    = "\n".join(lines)
+
+    gmail_send(tok, rtok, user_email, subject, body)
+    return {"items": len(events), "message": f"Daily agenda sent — {len(events)} event(s)"}
+
+
 def _exec_cal_meeting_reminder(fv: dict, tok: str, rtok: str, _last: str | None) -> dict:
     from command_executor import calendar_search, gmail_send
     minutes_before = int(fv.get("minutes_before") or 30)
@@ -544,6 +660,26 @@ def execute_automation_on_message(automation: dict, message: dict,
                     _gmail_modify(access_token, refresh_token, msg_id, add_labels=labels)
             return {"items": 1, "message": "Alert action applied", "status": "success"}
 
+        elif template_id == "gmail-auto-label":
+            match_by    = (fv.get("match_by") or "Sender").lower()
+            match_value = (fv.get("match_value") or "").strip()
+            label_name  = (fv.get("label_name") or "").strip()
+            if not match_value or not label_name:
+                return {"items": 0, "message": "Missing config", "status": "skipped"}
+            if match_by in ("sender", "domain"):
+                from_field = message.get("from", "").lower()
+                if match_value.lower().lstrip("@") not in from_field:
+                    return {"items": 0, "message": "Sender/domain no match", "status": "skipped"}
+            else:
+                if not _message_matches_keywords(message, [match_value]):
+                    return {"items": 0, "message": "Keyword no match", "status": "skipped"}
+            msg_id = message.get("id")
+            if not msg_id:
+                return {"items": 0, "message": "No message ID", "status": "error"}
+            label_id = _get_or_create_label(access_token, refresh_token, label_name)
+            _gmail_modify(access_token, refresh_token, msg_id, add_labels=[label_id])
+            return {"items": 1, "message": f"Applied label '{label_name}'", "status": "success"}
+
         else:
             return {"items": 0, "message": f"Template '{template_id}' not supported in push mode", "status": "skipped"}
 
@@ -657,8 +793,11 @@ _EXECUTORS = {
     "gmail-daily-digest":        _exec_gmail_daily_digest,
     "gmail-followup":            _exec_gmail_followup,
     "gmail-escalate":            _exec_gmail_escalate,
+    "gmail-auto-label":          _exec_gmail_auto_label,
+    "gmail-morning-triage":      _exec_gmail_morning_triage,
     "cal-focus-time":            _exec_cal_focus_time,
     "cal-meeting-reminder":      _exec_cal_meeting_reminder,
+    "cal-daily-agenda":          _exec_cal_daily_agenda,
 }
 
 

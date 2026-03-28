@@ -16,11 +16,16 @@ export default function SettingsPage() {
   const handleManagePlan = async () => {
     setManagingPlan(true);
     const res = await fetch('/api/portal', { method: 'POST' });
+    if (res.status === 404) {
+      // No subscription yet — send to pricing page
+      window.location.href = '/pricing';
+      return;
+    }
     const data = await res.json();
     if (data.url) {
       window.location.href = data.url;
     } else {
-      alert('Could not open billing portal. Please contact support.');
+      alert('Could not open billing portal. Please try again or contact support.');
       setManagingPlan(false);
     }
   };
