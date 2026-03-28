@@ -420,8 +420,8 @@ export default function LandingPage() {
                 <li><span className="check">✓</span> Basic inbox summary (1 sentence)</li>
                 <li><span className="cross">✕</span> No related docs/emails</li>
                 <li><span className="cross">✕</span> No priority detection</li>
-                <li><span className="cross">✕</span> No command bar</li>
-                <li><span className="cross">✕</span> No automated rules</li>
+                <li><span className="check">✓</span> 5 command bar commands/day</li>
+                <li><span className="check">✓</span> Up to 2 automated rules</li>
               </ul>
               <Link href="/login" className="btn btn-secondary" style={{ width: '100%' }}>Get Started</Link>
             </div>
@@ -435,8 +435,8 @@ export default function LandingPage() {
                 <li><span className="check">✓</span> Full AI inbox summary</li>
                 <li><span className="check">✓</span> Related docs &amp; emails</li>
                 <li><span className="check">✓</span> Priority email detection</li>
-                <li><span className="check">✓</span> Natural language command bar</li>
-                <li><span className="check">✓</span> Unlimited automated rules</li>
+                <li><span className="check">✓</span> Unlimited command bar</li>
+                <li><span className="check">✓</span> Up to 10 automated rules</li>
                 <li><span className="check">✓</span> Telegram delivery</li>
                 <li><span className="check">✓</span> Custom briefing time</li>
               </ul>
