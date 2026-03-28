@@ -58,8 +58,8 @@ export default function PricingPage() {
                 <li><span className="check">✓</span> 1-sentence inbox summary</li>
                 <li><span className="cross">✕</span> Related docs &amp; emails</li>
                 <li><span className="cross">✕</span> Priority email detection</li>
-                <li><span className="cross">✕</span> Command bar</li>
-                <li><span className="cross">✕</span> Automated rules</li>
+                <li><span className="check">✓</span> 5 command bar commands/day</li>
+                <li><span className="check">✓</span> Up to 2 automated rules</li>
                 <li><span className="cross">✕</span> Custom delivery time</li>
                 <li><span className="cross">✕</span> Telegram delivery</li>
               </ul>
@@ -78,7 +78,7 @@ export default function PricingPage() {
                 <li><span className="check">✓</span> Related docs &amp; emails per meeting</li>
                 <li><span className="check">✓</span> Priority email detection</li>
                 <li><span className="check">✓</span> Natural language command bar</li>
-                <li><span className="check">✓</span> Up to 5 automated rules</li>
+                <li><span className="check">✓</span> Up to 10 automated rules</li>
                 <li><span className="check">✓</span> Custom delivery time</li>
                 <li><span className="check">✓</span> Telegram delivery</li>
                 <li><span className="check">✓</span> Skip weekends option</li>
@@ -138,8 +138,8 @@ export default function PricingPage() {
                 <tr><td>Related docs/emails</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>AI inbox summary</td><td>1 sentence</td><td className={styles.highlighted}>Full</td><td>Full</td></tr>
                 <tr><td>Priority detection</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
-                <tr><td>Command bar</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
-                <tr><td>Automated rules</td><td>❌</td><td className={styles.highlighted}>Up to 5</td><td>Unlimited</td></tr>
+                <tr><td>Command bar</td><td>5/day</td><td className={styles.highlighted}>✅ Unlimited</td><td>✅ Unlimited</td></tr>
+                <tr><td>Automated rules</td><td>Up to 2 active</td><td className={styles.highlighted}>Up to 10</td><td>Unlimited</td></tr>
                 <tr><td>Custom delivery time</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>Telegram delivery</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>
                 <tr><td>Skip weekends</td><td>❌</td><td className={styles.highlighted}>✅</td><td>✅</td></tr>

@@ -734,8 +734,8 @@ export default function AutomationsPage() {
 
   const getAutomationLimit = (plan) => {
     if (plan === 'pro_plus') return Infinity;
-    if (['pro', 'trialing', 'pro_trial', 'active'].includes(plan)) return 5;
-    return 0;
+    if (['pro', 'trialing', 'pro_trial', 'active'].includes(plan)) return 10;
+    return 2; // free plan: 2 active automations
   };
 
   const getToken = useCallback(async () => {
@@ -808,10 +808,15 @@ export default function AutomationsPage() {
 
   const handleSaveAutomation = async (data) => {
     const limit = getAutomationLimit(userPlan);
-    if (automations.length >= limit) {
+    const activeCount = automations.filter(a => a.active !== false).length;
+    const checkCount = isPro(userPlan) ? automations.length : activeCount;
+    if (checkCount >= limit) {
       setSetupTemplate(null);
-      if (limit === 0) { openUpgrade(); }
-      else { setToast({ message: `You've reached the ${limit}-automation limit on Pro. Upgrade to Pro Plus for unlimited.`, error: true }); }
+      if (!isPro(userPlan)) {
+        setToast({ message: `Free plan allows ${limit} active automations. Upgrade to Pro for up to 10.`, error: true });
+      } else {
+        setToast({ message: `You've reached the ${limit}-automation limit on Pro. Upgrade to Pro Plus for unlimited.`, error: true });
+      }
       return;
     }
     try {
@@ -937,29 +942,6 @@ export default function AutomationsPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
-  if (!isPro(userPlan)) {
-    return (
-      <div>
-        <div className="page-header">
-          <h1>Automations</h1>
-          <p>Set-and-forget automations that run on schedule.</p>
-        </div>
-        <div className="card" style={{ padding: '48px 32px', textAlign: 'center', maxWidth: '480px' }}>
-          <div style={{ fontSize: '2.4rem', marginBottom: '16px' }}>🔄</div>
-          <span className="badge badge-pro" style={{ marginBottom: '14px', display: 'inline-block', fontSize: '0.7rem' }}>PRO</span>
-          <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
-            Automations require Pro
-          </h3>
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
-            Create rules that automatically archive emails, label messages, send follow-ups, and more — running 24/7 without any manual work.
-          </p>
-          <button className="btn btn-primary" style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px' }} onClick={openUpgrade}>
-            View Plans →
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -969,15 +951,21 @@ export default function AutomationsPage() {
           <p>Set-and-forget automations that run 24/7 on schedule.</p>
           {(() => {
             const limit = getAutomationLimit(userPlan);
-            if (limit !== Infinity) return (
+            if (limit === Infinity) return null;
+            const isFree = !isPro(userPlan);
+            const activeCount = automations.filter(a => a.active !== false).length;
+            const displayCount = isFree ? activeCount : automations.length;
+            const atLimit = displayCount >= limit;
+            return (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>
-                {automations.length}/{limit} automations used
-                {automations.length >= limit && (
-                  <> · <a href="/pricing" style={{ color: 'var(--accent-blue)' }}>Upgrade to Pro Plus for unlimited</a></>
+                {displayCount}/{limit} {isFree ? 'active ' : ''}automations used
+                {atLimit && (
+                  isFree
+                    ? <> · <a href="/pricing" style={{ color: 'var(--accent-blue)' }}>Upgrade to Pro for up to 10</a></>
+                    : <> · <a href="/pricing" style={{ color: 'var(--accent-blue)' }}>Upgrade to Pro Plus for unlimited</a></>
                 )}
               </p>
             );
-            return null;
           })()}
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>

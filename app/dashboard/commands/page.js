@@ -32,6 +32,9 @@ export default function CommandsPage() {
   const [pendingCommand,  setPendingCommand]  = useState(null); // { command, overrides }
   const [emailPreview,    setEmailPreview]    = useState(null); // { intent, commandText, overrides }
   const [calendarPreview, setCalendarPreview] = useState(null); // { intent, commandText, overrides }
+  const [dailyUsed,      setDailyUsed]      = useState(null);  // null = unknown, number = used today
+
+  const FREE_DAILY_CMD_LIMIT = 5;
 
   // skipPreview=true bypasses the preview step (used when confirming from modal)
   const runCommand = async (commandText, overrides = {}, skipPreview = false) => {
@@ -99,8 +102,15 @@ export default function CommandsPage() {
     e.preventDefault();
     const trimmed = command.trim();
     if (!trimmed) return;
-    if (!isPro(plan)) { openUpgrade(); return; }
+    // Free users: enforce client-side guard before hitting backend
+    if (!isPro(plan) && dailyUsed !== null && dailyUsed >= FREE_DAILY_CMD_LIMIT) {
+      setResultState({ error: `You've used all ${FREE_DAILY_CMD_LIMIT} free commands for today. Upgrade to Pro for unlimited.` });
+      return;
+    }
     await runCommand(trimmed);
+    if (!isPro(plan)) {
+      setDailyUsed(prev => (prev === null ? 1 : prev + 1));
+    }
   };
 
   const handleDisambiguationPick = async (extraOverrides) => {
@@ -164,6 +174,14 @@ export default function CommandsPage() {
       <div className="page-header">
         <h1>Command Bar</h1>
         <p>Type what you want in natural language. We&apos;ll handle the rest.</p>
+        {!isPro(plan) && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>
+            {dailyUsed !== null ? dailyUsed : '?'}/{FREE_DAILY_CMD_LIMIT} free commands used today
+            {dailyUsed !== null && dailyUsed >= FREE_DAILY_CMD_LIMIT && (
+              <> · <a href="/pricing" style={{ color: 'var(--accent-blue)' }}>Upgrade to Pro for unlimited</a></>
+            )}
+          </p>
+        )}
       </div>
 
       {/* Input */}

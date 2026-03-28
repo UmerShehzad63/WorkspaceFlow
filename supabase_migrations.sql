@@ -55,6 +55,10 @@ END $$;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gmail_history_id   TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gmail_watch_expiry TIMESTAMPTZ;
 
+-- ── 5b. Command bar daily usage tracking (free-plan limit) ─────────────────
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS cmd_daily_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS cmd_daily_date  DATE;
+
 -- ── 6. Automations ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS automations (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

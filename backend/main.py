@@ -117,7 +117,7 @@ ALLOWED_UPLOAD_MIME_TYPES = {
 @app.get("/health", response_class=JSONResponse, status_code=200, include_in_schema=False)
 async def health():
     """Unauthenticated liveness probe for Render/Render health checks."""
-    return JSONResponse(content={"status": "ok"}, status_code=200)
+    return JSONResponse(content={"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}, status_code=200)
 
 @app.get("/")
 async def root():
@@ -234,6 +234,47 @@ async def run_command(request: Request):
         raise HTTPException(status_code=400, detail="Command cannot be empty")
     if len(command) > 500:
         raise HTTPException(status_code=400, detail="Command too long (max 500 characters)")
+
+    # ── Plan check + daily limit for free users ───────────────────────────────
+    sb_url_cmd  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    svc_key_cmd = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    prof_url_cmd = (
+        f"{sb_url_cmd}/rest/v1/profiles"
+        f"?id=eq.{user_id}&select=plan,cmd_daily_count,cmd_daily_date"
+    )
+    svc_hdr_cmd = {"Authorization": f"Bearer {svc_key_cmd}", "apikey": svc_key_cmd}
+    async with httpx.AsyncClient(timeout=10.0) as _cl:
+        _pr = await _cl.get(prof_url_cmd, headers=svc_hdr_cmd)
+        _profiles_cmd = _pr.json() if _pr.status_code == 200 else []
+    _cmd_plan = ((_profiles_cmd[0].get("plan") or "free") if _profiles_cmd else "free").lower()
+    _PRO_CMD   = {"pro", "pro_plus", "trialing", "pro_trial", "active"}
+    if _cmd_plan not in _PRO_CMD:
+        FREE_DAILY_LIMIT = 5
+        import datetime as _dt
+        _today = str(_dt.date.today())
+        _prof  = _profiles_cmd[0] if _profiles_cmd else {}
+        _count = _prof.get("cmd_daily_count") or 0
+        _date  = _prof.get("cmd_daily_date") or ""
+        if _date != _today:
+            _count = 0
+        if _count >= FREE_DAILY_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Free plan limit: {FREE_DAILY_LIMIT} commands per day. Upgrade to Pro for unlimited."
+            )
+        # Increment counter — best-effort, non-blocking
+        _new_count = _count + 1
+        _patch_url = f"{sb_url_cmd}/rest/v1/profiles?id=eq.{user_id}"
+        _patch_hdr = {**svc_hdr_cmd, "Content-Type": "application/json", "Prefer": "return=minimal"}
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as _pcl:
+                await _pcl.patch(
+                    _patch_url,
+                    headers=_patch_hdr,
+                    json={"cmd_daily_count": _new_count, "cmd_daily_date": _today},
+                )
+        except Exception:
+            pass  # non-critical
 
     intent = await parse_command_intent(command, user_timezone=req_timezone)
     if not isinstance(intent, dict) or "service" not in intent:
@@ -804,17 +845,29 @@ async def create_automation(request: Request):
     plan = (profiles[0].get("plan") or "free").lower() if profiles else "free"
 
     PRO_PLANS = {"pro", "pro_plus", "trialing", "pro_trial", "active"}
-    if plan not in PRO_PLANS:
-        raise HTTPException(status_code=403, detail="Automations require a Pro plan.")
 
-    # Count existing automations
-    count_url = f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&select=id"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        cresp   = await client.get(count_url, headers=_sb_service_headers())
-        current = cresp.json() if cresp.status_code == 200 else []
-    limit = 5 if plan != "pro_plus" else None
-    if limit and len(current) >= limit:
-        raise HTTPException(status_code=403, detail=f"Pro plan limit is {limit} automations. Upgrade to Pro Plus for unlimited.")
+    # Determine per-plan automation limit
+    if plan == "pro_plus":
+        limit = None        # unlimited
+    elif plan in PRO_PLANS:
+        limit = 10          # pro / trialing / pro_trial / active
+    else:
+        limit = 2           # free — only active automations count
+
+    # Count automations (active-only for free, all for paid)
+    if limit is not None:
+        if plan not in PRO_PLANS:
+            count_url = f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&is_active=eq.true&select=id"
+        else:
+            count_url = f"{sb_url}/rest/v1/automations?user_id=eq.{user_id}&select=id"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            cresp   = await client.get(count_url, headers=_sb_service_headers())
+            current = cresp.json() if cresp.status_code == 200 else []
+        if len(current) >= limit:
+            if plan not in PRO_PLANS:
+                raise HTTPException(status_code=403, detail=f"Free plan limit is {limit} active automations. Upgrade to Pro for more.")
+            else:
+                raise HTTPException(status_code=403, detail=f"Pro plan limit is {limit} automations. Upgrade to Pro Plus for unlimited.")
 
     payload = {
         "user_id":      user_id,
