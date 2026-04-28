@@ -424,7 +424,7 @@ def _exec_cal_focus_time(fv: dict, tok: str, rtok: str, _last: str | None) -> di
         start_iso=start_dt.isoformat(),
         end_iso=end_dt.isoformat(),
         attendees=[],
-        description="Created automatically by WorkspaceFlow automations.",
+        description="Created automatically by CouchMail automations.",
     )
     return {"items": 1, "message": f"Created focus block: '{result.get('title', event_title)}'"}
 
@@ -489,7 +489,7 @@ def _exec_gmail_morning_triage(fv: dict, tok: str, rtok: str, _last: str | None)
             if snippet:
                 lines.append(f"   PREVIEW: {snippet}...")
             lines.append("")
-        lines.append("—\nSent by WorkspaceFlow Morning Triage automation.")
+        lines.append("—\nSent by CouchMail Morning Triage automation.")
         subject = f"☀️ Morning Triage ({today_str}) — {len(msgs)} email(s) need attention"
         body    = "\n".join(lines)
 
@@ -537,7 +537,7 @@ def _exec_cal_daily_agenda(fv: dict, tok: str, rtok: str, _last: str | None) -> 
                 names = [a if isinstance(a, str) else a.get("email", "") for a in attendees[:3]]
                 lines.append(f"  👥 {', '.join(n for n in names if n)}")
         lines.append(f"\n{len(events)} event(s) total.")
-        lines.append("—\nSent by WorkspaceFlow Daily Agenda automation.")
+        lines.append("—\nSent by CouchMail Daily Agenda automation.")
         subject = f"📅 Your Agenda — {today_str} — {len(events)} event(s)"
         body    = "\n".join(lines)
 

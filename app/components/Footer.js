@@ -8,7 +8,7 @@ export default function Footer() {
         <div className="footer-grid">
           <div className="footer-brand">
             <Link href="/" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-              <Image src="/icon.png" alt="WorkspaceFlow" width={40} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)', opacity: 0.85 }} />
+              <Image src="/icon.png" alt="CouchMail" width={40} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)', opacity: 0.85 }} />
               <span
                 style={{
                   fontFamily: "'Manrope', 'Inter', sans-serif",
@@ -18,10 +18,10 @@ export default function Footer() {
                   lineHeight: 1,
                 }}
               >
-                WorkspaceFlow
+                CouchMail
               </span>
             </Link>
-            <p>A Google Workspace automation system for teams that want briefings, AI commands, and repeatable workflows in one place.</p>
+            <p>AI-powered automation for Gmail, Calendar, and Drive. Get daily briefings, run AI commands, and manage workflows from Telegram.</p>
           </div>
 
           <div className="footer-col">
@@ -50,7 +50,7 @@ export default function Footer() {
         </div>
 
         <div className="footer-bottom">
-          <span>© 2026 WorkspaceFlow. All rights reserved.</span>
+          <span>© 2026 CouchMail. All rights reserved.</span>
           <div style={{ display: 'flex', gap: '16px' }}>
             <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>Twitter</Link>
             <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>LinkedIn</Link>

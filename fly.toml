@@ -1,4 +1,4 @@
-# fly.toml — WorkspaceFlow on Fly.io
+# fly.toml — CouchMail on Fly.io
 # Deploy: flyctl deploy
 # First deploy: flyctl launch --no-deploy, then set secrets, then flyctl deploy
 

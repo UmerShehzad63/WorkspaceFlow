@@ -1,11 +1,11 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "WorkspaceFlow | Google Workspace Automation System",
+  title: "CouchMail | Gmail Automation & AI Briefings",
   description:
-    "WorkspaceFlow is a Google Workspace automation system for daily briefings, AI commands, and always-on workflows across Gmail, Calendar, Drive, and Telegram.",
+    "CouchMail brings AI-powered automation to Gmail, Calendar, and Drive. Get daily briefings, run AI commands, and manage everything from Telegram.",
   keywords:
-    "WorkspaceFlow, Google Workspace automation, Gmail automation, Google Calendar automation, Google Drive automation, AI commands, daily briefing",
+    "CouchMail, Gmail automation, Google Calendar automation, Google Drive automation, AI commands, daily briefing, email automation",
 };
 
 export default function RootLayout({ children }) {

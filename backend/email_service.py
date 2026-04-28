@@ -122,7 +122,7 @@ def send_preview_email(user_email: str, user_name: str, briefing: dict, note: st
             "Set SMTP_EMAIL and SMTP_PASSWORD in your .env file."
         )
 
-    subject = "📋 Your WorkspaceFlow Morning Briefing Preview"
+    subject = "📋 Your CouchMail Morning Briefing Preview"
 
     schedule    = briefing.get("schedule", [])
     last_24h    = briefing.get("last_24h") or {}
@@ -161,7 +161,7 @@ def send_preview_email(user_email: str, user_name: str, briefing: dict, note: st
                 border:1px solid #e0e0e0;overflow:hidden">
     <tr>
       <td style="background:#0a0a0f;padding:22px 28px">
-        <h2 style="margin:0;color:#fff;font-size:18px">⚡ WorkspaceFlow · Morning Briefing</h2>
+        <h2 style="margin:0;color:#fff;font-size:18px">⚡ CouchMail · Morning Briefing</h2>
         <p style="margin:4px 0 0;color:#888;font-size:13px">Hi {user_name or user_email} — here&apos;s your preview</p>
       </td>
     </tr>
@@ -215,7 +215,7 @@ def send_preview_email(user_email: str, user_name: str, briefing: dict, note: st
     <tr>
       <td style="padding:20px 28px;border-top:1px solid #eee;margin-top:16px;background:#f9f9f9">
         <p style="margin:0;font-size:12px;color:#999">
-          Sent by <strong>WorkspaceFlow</strong> · Your AI-powered workspace briefing
+          Sent by <strong>CouchMail</strong> · Your AI-powered email briefing
         </p>
       </td>
     </tr>
@@ -224,7 +224,7 @@ def send_preview_email(user_email: str, user_name: str, briefing: dict, note: st
 </html>
 """
 
-    plain = f"WorkspaceFlow Morning Briefing\n\nSchedule: {len(schedule)} event(s)\n\n{summary_24h}"
+    plain = f"CouchMail Morning Briefing\n\nSchedule: {len(schedule)} event(s)\n\n{summary_24h}"
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
@@ -259,7 +259,7 @@ def send_support_email(
             "Set ADMIN_EMAIL in your .env file."
         )
 
-    email_subject = f"[WorkspaceFlow Support] {subject_type} from {user_name or user_email}"
+    email_subject = f"[CouchMail Support] {subject_type} from {user_name or user_email}"
 
     plain = f"""\
 Support Request

@@ -11,7 +11,7 @@ export default function Navbar({ transparent = false }) {
       <nav className="navbar" style={transparent ? { background: 'transparent', borderBottom: 'none' } : {}}>
         <div className="container">
           <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Image src="/icon.png" alt="WorkspaceFlow" width={44} height={44} style={{ objectFit: 'contain' }} priority />
+            <Image src="/icon.png" alt="CouchMail" width={44} height={44} style={{ objectFit: 'contain' }} priority />
             <span
               style={{
                 fontFamily: "'Manrope', 'Inter', sans-serif",
@@ -21,7 +21,7 @@ export default function Navbar({ transparent = false }) {
                 lineHeight: 1,
               }}
             >
-              WorkspaceFlow
+              CouchMail
             </span>
           </Link>
 
@@ -33,7 +33,7 @@ export default function Navbar({ transparent = false }) {
 
           <div className="nav-actions">
             <Link href="/login" className="btn btn-ghost" style={{ fontWeight: 700, color: 'var(--color-primary)' }}>Sign In</Link>
-            <Link href="/login" className="btn btn-primary">Open Dashboard</Link>
+            <Link href="/login" className="btn btn-primary">Sign Up</Link>
           </div>
 
           <button
@@ -55,7 +55,7 @@ export default function Navbar({ transparent = false }) {
         <hr className="divider" />
         <Link href="/login" onClick={() => setMenuOpen(false)}>Sign In</Link>
         <Link href="/login" className="btn btn-primary" style={{ textAlign: 'center', marginTop: '8px' }} onClick={() => setMenuOpen(false)}>
-          Open Dashboard
+          Sign Up
         </Link>
       </div>
     </>

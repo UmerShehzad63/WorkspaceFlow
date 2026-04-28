@@ -21,7 +21,7 @@ export default function LandingPage() {
         <div className="container" style={{ position: 'relative', zIndex: 2 }}>
           <div className={styles.heroContent}>
             <div className={`${styles.heroBadge} animate-in`}>
-              <span>AI</span> Google Workspace Automation System
+              <span>AI-Powered</span> Gmail & Calendar Automation
             </div>
             <h1 className={`${styles.heroTitle} animate-in animate-in-delay-1`}>
               Automate your Gmail,
@@ -29,15 +29,18 @@ export default function LandingPage() {
               Calendar, Drive, and briefings.
             </h1>
             <p className={`${styles.heroSubtitle} animate-in animate-in-delay-2`}>
-              WorkspaceFlow gives your team one place to run AI commands, schedule automations, and send daily operational briefings without building brittle flows by hand.
+              CouchMail brings daily briefings, AI-powered email automation, and always-on workflows to Gmail, Calendar, Drive, and Telegram—no coding required.
             </p>
             <div className={`${styles.heroCtas} animate-in animate-in-delay-3`}>
               <Link href="/login" className="btn btn-primary btn-lg">
-                Open Automation Dashboard
+                Sign In
+              </Link>
+              <Link href="/login" className="btn btn-ghost btn-lg" style={{ color: '#001857' }}>
+                Sign Up
               </Link>
             </div>
             <p className={`${styles.heroNote} animate-in animate-in-delay-4`}>
-              Built for operators, assistants, founders, and busy teams running inside Google Workspace
+              Built for operators, assistants, founders, and busy teams who live in Gmail
             </p>
           </div>
 

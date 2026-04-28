@@ -94,7 +94,7 @@ async def send_test_message(chat_id: str | int) -> None:
     """Send a test message to verify the connection works."""
     await send_message(
         chat_id,
-        "✅ <b>WorkspaceFlow — connection verified!</b>\n\n"
+        "✅ <b>CouchMail — connection verified!</b>\n\n"
         "Your daily morning briefing will arrive here at your configured time.\n\n"
         "<b>Available commands:</b>\n"
         "/briefing — full morning briefing\n"
@@ -126,7 +126,7 @@ def format_briefing_telegram(briefing: dict, raw_data: dict | None = None) -> st
     - Older (emails + inbox summary)
     """
     today = __import__("datetime").date.today().strftime("%A, %B %-d")
-    lines = [f"<b>📋 WorkspaceFlow — {today}</b>"]
+    lines = [f"<b>📋 CouchMail — {today}</b>"]
 
     # ── Today's Schedule ────────────────────────────────────────────────────
     schedule = briefing.get("schedule") or []

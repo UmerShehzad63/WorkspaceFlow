@@ -135,7 +135,7 @@ export default function TelegramPage() {
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
             {isConnected
               ? `Briefings are being sent to ${status.username ? `@${status.username}` : 'your Telegram'}.`
-              : 'Open the WorkspaceFlow bot on Telegram and it will link your account automatically.'}
+              : 'Open the CouchMail bot on Telegram and it will link your account automatically.'}}
           </p>
 
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>

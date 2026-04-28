@@ -1545,12 +1545,12 @@ async def telegram_webhook(request: Request):
                 await send_message(
                     chat_id,
                     "⚠️ Something went wrong linking your account. "
-                    "Please try again from the WorkspaceFlow dashboard.",
+                    "Please try again from the CouchMail dashboard.",
                 )
         else:
             await send_message(
                 chat_id,
-                "👋 <b>Welcome to WorkspaceFlow!</b>\n\n"
+                "👋 <b>Welcome to CouchMail!</b>\n\n"
                 "Open your dashboard and click <b>Open Telegram Bot →</b> to link automatically.",
             )
         return JSONResponse({"ok": True})
@@ -1605,7 +1605,7 @@ async def telegram_webhook(request: Request):
     if not rows:
         await send_message(
             chat_id,
-            "👋 This Telegram isn't linked to WorkspaceFlow.\n\n"
+            "👋 This Telegram isn't linked to CouchMail.\n\n"
             "Open your dashboard and click <b>Open Telegram Bot →</b> to connect.",
         )
         return JSONResponse({"ok": True})
@@ -1999,7 +1999,7 @@ async def telegram_webhook(request: Request):
             await send_message(
                 chat_id,
                 "📋 <b>No automations yet.</b>\n\n"
-                "Create one at workspace-flow.vercel.app/dashboard/rules\n"
+                "Create one at couchmail.app/dashboard/rules\n"
                 "or type: /automation add \"describe what you want\"",
             )
         else:
@@ -2062,7 +2062,7 @@ async def telegram_webhook(request: Request):
                     await send_message(chat_id, f"✅ Automation {word}: <i>{match.get('title', description)}</i>")
 
         elif sub == "run":
-            await send_message(chat_id, "⚡ Manual triggers coming soon. Manage at workspace-flow.vercel.app/dashboard/rules")
+            await send_message(chat_id, "⚡ Manual triggers coming soon. Manage at couchmail.app/dashboard/rules")
         else:
             await send_message(
                 chat_id,
@@ -2075,7 +2075,7 @@ async def telegram_webhook(request: Request):
     else:
         # Unknown slash command OR any plain text → natural language
         if not access_token:
-            await send_message(chat_id, "⚠️ Google account not connected. Reconnect at workspace-flow.vercel.app")
+            await send_message(chat_id, "⚠️ Google account not connected. Reconnect at couchmail.app/dashboard")
             return JSONResponse({"ok": True})
         await _handle_nl_command(chat_id, text, user_id, access_token, refresh_token)
 
