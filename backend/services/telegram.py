@@ -24,11 +24,17 @@ def _ensure_configured():
 
 
 async def set_webhook(url: str) -> None:
-    """Register the webhook URL with the Telegram Bot API."""
+    """Register the webhook URL with the Telegram Bot API, including a secret token."""
     _ensure_configured()
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if not webhook_secret:
+        raise RuntimeError(
+            "TELEGRAM_WEBHOOK_SECRET is not set. "
+            "Generate a random secret and set it in your environment variables."
+        )
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
-        await bot.set_webhook(url=url)
-    logger.info("[Telegram] Webhook registered: %s", url)
+        await bot.set_webhook(url=url, secret_token=webhook_secret)
+    logger.info("[Telegram] Webhook registered with secret: %s", url)
 
 
 async def send_message(chat_id: str | int, text: str, reply_markup=None) -> dict | None:
@@ -92,7 +98,6 @@ async def send_test_message(chat_id: str | int) -> None:
         "Your daily morning briefing will arrive here at your configured time.\n\n"
         "<b>Available commands:</b>\n"
         "/briefing — full morning briefing\n"
-        "/summary — inbox summary\n"
         "/tasks — priority items\n"
         "/status — account status\n"
         "/help — all commands",
@@ -104,33 +109,65 @@ def generate_verification_code() -> str:
     return str(secrets.randbelow(900_000) + 100_000)
 
 
-def format_briefing_telegram(briefing: dict) -> str:
-    """
-    Format a briefing dict as an HTML Telegram message.
-    Shows 3–4 email bullets with a prompt to send /briefing for the full view.
-    """
-    lines = ["<b>📋 WorkspaceFlow — Morning Briefing</b>\n"]
+def _format_sender(from_str: str) -> str:
+    """Extract display name from 'Name <email>' format."""
+    if not from_str:
+        return "Unknown"
+    import re
+    match = re.match(r'^"?([^"<]+?)"?\s*<[^>]+>$', from_str)
+    return match.group(1).strip() if match else from_str.replace("<", "").replace(">", "").strip() or from_str
 
+
+def format_briefing_telegram(briefing: dict, raw_data: dict | None = None) -> str:
+    """
+    Format a briefing dict as an HTML Telegram message matching the dashboard layout:
+    - Today's Schedule
+    - Last 24 Hours (emails + inbox summary)
+    - Older (emails + inbox summary)
+    """
+    today = __import__("datetime").date.today().strftime("%A, %B %-d")
+    lines = [f"<b>📋 WorkspaceFlow — {today}</b>"]
+
+    # ── Today's Schedule ────────────────────────────────────────────────────
     schedule = briefing.get("schedule") or []
+    lines.append("\n<b>TODAY'S SCHEDULE</b>")
     if schedule:
-        lines.append("<b>📅 Today's Schedule</b>")
-        for ev in schedule[:5]:
-            lines.append(f"  • {ev.get('time', 'All Day')} — {ev.get('title', 'Event')}")
-        lines.append("")
+        for ev in schedule:
+            time_str = ev.get("time") or "All Day"
+            title    = ev.get("title") or "Event"
+            lines.append(f"  {time_str} — {title}")
+    else:
+        lines.append("  No meetings scheduled today.")
 
-    last_24h = briefing.get("last_24h") or {}
-    urgent   = last_24h.get("urgent_items") or []
-    if urgent:
-        lines.append("<b>⚡ Priority Items</b>")
-        for item in urgent[:4]:
-            lines.append(f"  • {item}")
-        if len(urgent) > 4:
-            lines.append(f"\nSend /briefing to see all {len(urgent)} items.")
-        lines.append("")
+    # ── Helper to render an email section ───────────────────────────────────
+    def _email_section(label: str, section_data: dict, emails: list) -> None:
+        lines.append(f"\n<b>{label.upper()}</b>")
+        if emails:
+            for email in emails[:5]:
+                sender  = _format_sender(email.get("from", ""))
+                subject = email.get("subject", "(no subject)")
+                lines.append(f"  📧 <b>{sender}</b> — \"{subject}\"")
+        else:
+            lines.append("  No emails.")
 
-    summary = (last_24h.get("summary") or "").strip()
-    if summary:
-        lines.append("<b>📫 Inbox Summary</b>")
-        lines.append(summary[:500])
+        lines.append("")
+        summary = (section_data.get("summary") or "").strip()
+        lines.append(f"<b>📫 Inbox Summary</b>")
+        lines.append(summary if summary else "No summary available.")
+
+        urgent = section_data.get("urgent_items") or []
+        if urgent:
+            lines.append("")
+            lines.append("<b>⚡ Action Items</b>")
+            for item in urgent:
+                lines.append(f"  • {item}")
+
+    last_24h        = briefing.get("last_24h") or {}
+    older           = briefing.get("older") or {}
+    last_24h_emails = (raw_data or {}).get("last_24h_emails") or []
+    older_emails    = (raw_data or {}).get("older_emails") or []
+
+    _email_section("Last 24 Hours", last_24h, last_24h_emails)
+    _email_section("Older", older, older_emails)
 
     return "\n".join(lines)

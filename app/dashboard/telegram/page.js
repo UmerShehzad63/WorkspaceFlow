@@ -1,22 +1,21 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { usePlan, isPro } from '../plan-context';
 
 const BACKEND = () => process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 const BOT_USERNAME = 'workspace_flow_bot';
-const POLL_INTERVAL = 3000;   // 3 s between status checks
-const POLL_TIMEOUT  = 120000; // stop polling after 2 min
+const POLL_INTERVAL = 3000;
+const POLL_TIMEOUT = 120000;
 
 export default function TelegramPage() {
-  const [userId,    setUserId]    = useState(null);
-  const [status,    setStatus]    = useState(null);  // null = loading
-  const [loading,   setLoading]   = useState(false);
-  const [msg,       setMsg]       = useState(null);  // { ok, text }
-  const [polling,   setPolling]   = useState(false); // true while awaiting link
+  const [userId, setUserId] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [polling, setPolling] = useState(false);
 
-  const pollRef    = useRef(null);
-  const tokenRef   = useRef(null); // cached access token for polling
+  const pollRef = useRef(null);
+  const tokenRef = useRef(null);
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -27,30 +26,31 @@ export default function TelegramPage() {
   };
 
   const startPolling = () => {
-    if (pollRef.current) return; // already polling
+    if (pollRef.current) return;
     setPolling(true);
-    // Auto-stop after POLL_TIMEOUT
     const stopAt = Date.now() + POLL_TIMEOUT;
 
     pollRef.current = setInterval(async () => {
-      if (Date.now() > stopAt) { stopPolling(); return; }
+      if (Date.now() > stopAt) {
+        stopPolling();
+        return;
+      }
       try {
-        const res  = await fetch(`${BACKEND()}/api/telegram/status`, {
+        const res = await fetch(`${BACKEND()}/api/telegram/status`, {
           headers: { Authorization: `Bearer ${tokenRef.current}` },
         });
         if (res.ok) {
           const data = await res.json();
           if (data.connected) {
             setStatus(data);
-            setMsg({ ok: true, text: '✅ Connected! You\'ll receive briefings here.' });
+            setMsg({ ok: true, text: "Connected. You'll receive briefings here." });
             stopPolling();
           }
         }
-      } catch { /* silent */ }
+      } catch {}
     }, POLL_INTERVAL);
   };
 
-  // Load user ID and connection status on mount
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -62,29 +62,20 @@ export default function TelegramPage() {
         const res = await fetch(`${BACKEND()}/api/telegram/status`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
-        if (res.ok) {
-          setStatus(await res.json());
-        } else {
-          // 403 (free plan) or any error — still show the button, just no status
-          setStatus({ connected: false });
-        }
+        setStatus(res.ok ? await res.json() : { connected: false });
       } catch {
         setStatus({ connected: false });
       }
     };
+
     init();
-    return stopPolling; // cleanup on unmount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return stopPolling;
   }, []);
 
-  const telegramUrl = userId
-    ? `https://t.me/${BOT_USERNAME}?start=${userId}`
-    : `https://t.me/${BOT_USERNAME}`;
+  const telegramUrl = userId ? `https://t.me/${BOT_USERNAME}?start=${userId}` : `https://t.me/${BOT_USERNAME}`;
 
   const handleOpenBot = () => {
     window.open(telegramUrl, '_blank', 'noopener,noreferrer');
-    // Start polling for connection — the bot will link the account automatically
-    // via the ?start=USER_ID payload; we detect it and update the UI.
     if (!status?.connected) startPolling();
   };
 
@@ -111,13 +102,13 @@ export default function TelegramPage() {
     setMsg(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res  = await fetch(`${BACKEND()}/api/telegram/test`, {
+      const res = await fetch(`${BACKEND()}/api/telegram/test`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Test failed');
-      setMsg({ ok: true, text: 'Test message sent to your Telegram!' });
+      setMsg({ ok: true, text: 'Test message sent to your Telegram.' });
     } catch (e) {
       setMsg({ ok: false, text: e.message });
     } finally {
@@ -126,112 +117,61 @@ export default function TelegramPage() {
   };
 
   const isConnected = status?.connected;
-  const { plan, openUpgrade } = usePlan();
-
-  if (!isPro(plan)) {
-    return (
-      <div>
-        <div className="page-header">
-          <h1>Telegram</h1>
-          <p>Get your daily briefing delivered to Telegram.</p>
-        </div>
-        <div style={{ maxWidth: '480px' }}>
-          <div className="card" style={{ padding: '40px 32px', textAlign: 'center' }}>
-            <div style={{ fontSize: '2.8rem', marginBottom: '16px' }}>✈️</div>
-            <span className="badge badge-pro" style={{ marginBottom: '14px', display: 'inline-block', fontSize: '0.7rem' }}>PRO</span>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>
-              Telegram requires Pro
-            </h2>
-            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
-              Upgrade to Pro to receive your daily briefing on Telegram and run AI commands directly from your phone.
-            </p>
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px' }}
-              onClick={openUpgrade}
-            >
-              View Plans →
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
       <div className="page-header">
         <h1>Telegram</h1>
-        <p>Get your daily briefing delivered to Telegram.</p>
+        <p>Send daily briefings and quick actions to Telegram.</p>
       </div>
 
-      {/* Main card */}
       <div style={{ maxWidth: '520px' }}>
         <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
-
-          {/* Icon */}
           <div style={{ fontSize: '2.8rem', marginBottom: '16px' }}>✈️</div>
-
-          {/* Headline */}
           <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>
             {isConnected ? 'Telegram Connected' : 'Connect Telegram'}
           </h2>
 
-          {/* Description */}
           <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '28px' }}>
             {isConnected
               ? `Briefings are being sent to ${status.username ? `@${status.username}` : 'your Telegram'}.`
-              : 'Click the button below to open the WorkspaceFlow bot on Telegram. It will automatically link your account.'}
+              : 'Open the WorkspaceFlow bot on Telegram and it will link your account automatically.'}
           </p>
 
-          {/* Status badge */}
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: '6px',
               padding: '5px 14px', borderRadius: '999px', fontSize: '0.78rem', fontWeight: 700,
               background: isConnected ? 'rgba(52,211,153,0.1)' : polling ? 'rgba(96,165,250,0.1)' : 'rgba(255,255,255,0.05)',
-              border:     isConnected ? '1px solid rgba(52,211,153,0.25)' : polling ? '1px solid rgba(96,165,250,0.25)' : '1px solid var(--border-color)',
-              color:      isConnected ? 'var(--accent-green)' : polling ? 'var(--accent-blue)' : 'var(--text-muted)',
+              border: isConnected ? '1px solid rgba(52,211,153,0.25)' : polling ? '1px solid rgba(96,165,250,0.25)' : '1px solid var(--border-color)',
+              color: isConnected ? 'var(--accent-green)' : polling ? 'var(--accent-blue)' : 'var(--text-muted)',
             }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isConnected ? 'var(--accent-green)' : polling ? 'var(--accent-blue)' : 'var(--text-muted)', display: 'inline-block' }} />
-              {status === null ? 'Checking…' : isConnected ? 'Connected' : polling ? 'Waiting for link…' : 'Not connected'}
+              {status === null ? 'Checking...' : isConnected ? 'Connected' : polling ? 'Waiting for link...' : 'Not connected'}
             </span>
           </div>
 
-          {/* Primary action */}
           {!isConnected && (
             <button
               className="btn btn-primary"
               style={{ width: '100%', fontSize: '0.95rem', padding: '14px 20px', marginBottom: '12px' }}
               onClick={handleOpenBot}
             >
-              {polling ? 'Waiting for Telegram… (click to retry)' : 'Open Telegram Bot →'}
+              {polling ? 'Waiting for Telegram... (click to retry)' : 'Open Telegram Bot →'}
             </button>
           )}
 
-          {/* Connected actions */}
           {isConnected && (
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '12px' }}>
-              <button
-                className="btn btn-secondary"
-                style={{ fontSize: '0.85rem' }}
-                onClick={handleTest}
-                disabled={loading}
-              >
-                {loading ? '…' : '📩 Send Test Message'}
+              <button className="btn btn-secondary" style={{ fontSize: '0.85rem' }} onClick={handleTest} disabled={loading}>
+                {loading ? '...' : 'Send Test Message'}
               </button>
-              <button
-                className="btn btn-secondary"
-                style={{ fontSize: '0.85rem', color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }}
-                onClick={handleDisconnect}
-                disabled={loading}
-              >
-                {loading ? '…' : 'Disconnect'}
+              <button className="btn btn-secondary" style={{ fontSize: '0.85rem', color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }} onClick={handleDisconnect} disabled={loading}>
+                {loading ? '...' : 'Disconnect'}
               </button>
             </div>
           )}
 
-          {/* Re-open bot link even when connected (for re-linking) */}
           {isConnected && (
             <button
               onClick={handleOpenBot}
@@ -241,44 +181,17 @@ export default function TelegramPage() {
             </button>
           )}
 
-          {/* Feedback message */}
           {msg && (
             <div style={{
               marginTop: '16px', padding: '10px 14px', borderRadius: '8px', fontSize: '0.84rem',
               background: msg.ok ? 'rgba(52,211,153,0.07)' : 'rgba(239,68,68,0.07)',
-              border:     msg.ok ? '1px solid rgba(52,211,153,0.2)' : '1px solid rgba(239,68,68,0.2)',
-              color:      msg.ok ? 'var(--accent-green)' : '#ef4444',
+              border: msg.ok ? '1px solid rgba(52,211,153,0.2)' : '1px solid rgba(239,68,68,0.2)',
+              color: msg.ok ? 'var(--accent-green)' : '#ef4444',
             }}>
               {msg.text}
             </div>
           )}
         </div>
-
-        {/* How it works */}
-        {!isConnected && (
-          <div style={{ marginTop: '24px' }}>
-            <div style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '10px' }}>
-              How it works
-            </div>
-            <div className="card" style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {[
-                'Click "Open Telegram Bot →" above.',
-                'Telegram opens with @workspace_flow_bot — tap Start.',
-                'Your account links automatically. No codes needed.',
-                'Your morning briefing arrives each day at 8 AM.',
-              ].map((text, i) => (
-                <div key={i} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--gradient-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.68rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                    {i + 1}
-                  </div>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.55, margin: 0 }}>
-                    {text}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

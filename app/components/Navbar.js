@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 
 export default function Navbar({ transparent = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -9,20 +10,30 @@ export default function Navbar({ transparent = false }) {
     <>
       <nav className="navbar" style={transparent ? { background: 'transparent', borderBottom: 'none' } : {}}>
         <div className="container">
-          <Link href="/" className="nav-logo">
-            <div className="nav-logo-icon">⚡</div>
-            WorkspaceFlow
+          <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Image src="/icon.png" alt="WorkspaceFlow" width={44} height={44} style={{ objectFit: 'contain' }} priority />
+            <span
+              style={{
+                fontFamily: "'Manrope', 'Inter', sans-serif",
+                fontWeight: 800,
+                fontSize: '1.25rem',
+                color: '#001857',
+                lineHeight: 1,
+              }}
+            >
+              WorkspaceFlow
+            </span>
           </Link>
 
           <ul className="nav-links">
             <li><Link href="/#features">Features</Link></li>
+            <li><Link href="/#automation-library">Automation Library</Link></li>
             <li><Link href="/#how-it-works">How It Works</Link></li>
-            <li><Link href="/pricing">Pricing</Link></li>
           </ul>
 
           <div className="nav-actions">
-            <Link href="/login" className="btn btn-ghost">Log in</Link>
-            <Link href="/login" className="btn btn-primary">Start Free Trial</Link>
+            <Link href="/login" className="btn btn-ghost" style={{ fontWeight: 700, color: 'var(--color-primary)' }}>Sign In</Link>
+            <Link href="/login" className="btn btn-primary">Open Dashboard</Link>
           </div>
 
           <button
@@ -39,12 +50,12 @@ export default function Navbar({ transparent = false }) {
 
       <div className={`mobile-menu ${menuOpen ? 'open' : ''}`}>
         <Link href="/#features" onClick={() => setMenuOpen(false)}>Features</Link>
+        <Link href="/#automation-library" onClick={() => setMenuOpen(false)}>Automation Library</Link>
         <Link href="/#how-it-works" onClick={() => setMenuOpen(false)}>How It Works</Link>
-        <Link href="/pricing" onClick={() => setMenuOpen(false)}>Pricing</Link>
         <hr className="divider" />
-        <Link href="/login" onClick={() => setMenuOpen(false)}>Log in</Link>
+        <Link href="/login" onClick={() => setMenuOpen(false)}>Sign In</Link>
         <Link href="/login" className="btn btn-primary" style={{ textAlign: 'center', marginTop: '8px' }} onClick={() => setMenuOpen(false)}>
-          Start Free Trial
+          Open Dashboard
         </Link>
       </div>
     </>

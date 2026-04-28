@@ -3,7 +3,7 @@
   position: sticky;
   top: 0;
   z-index: 48;
-  background: rgba(10, 10, 15, 0.92);
+  background: rgba(250, 249, 245, 0.92);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border-color);
@@ -24,16 +24,17 @@
   display: flex;
   align-items: center;
   gap: 0;
-  background: var(--bg-tertiary);
+  background: #fff;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   padding: 4px 4px 4px 14px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: var(--shadow-sm);
 }
 
 .inputRow:focus-within {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(79, 125, 249, 0.12);
+  border-color: var(--color-secondary);
+  box-shadow: 0 0 0 3px rgba(86, 68, 208, 0.1);
 }
 
 .prefix {
@@ -93,7 +94,7 @@
 .execBtn {
   flex-shrink: 0;
   padding: 6px 14px;
-  background: var(--accent-blue);
+  background: var(--color-secondary);
   color: #fff;
   border: none;
   border-radius: 9px;
@@ -106,6 +107,7 @@
 
 .execBtn:hover:not(:disabled) {
   background: var(--accent-blue-dark);
+  border-radius: 9px;
 }
 
 .execBtn:disabled {
@@ -124,7 +126,7 @@
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  background: var(--bg-secondary);
+  background: #fff;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   padding: 14px 16px;

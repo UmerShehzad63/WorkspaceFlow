@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 export default function Footer() {
   return (
@@ -6,17 +7,27 @@ export default function Footer() {
       <div className="container">
         <div className="footer-grid">
           <div className="footer-brand">
-            <Link href="/" className="nav-logo" style={{ marginBottom: '4px' }}>
-              <div className="nav-logo-icon">⚡</div>
-              WorkspaceFlow
+            <Link href="/" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+              <Image src="/icon.png" alt="WorkspaceFlow" width={40} height={40} style={{ objectFit: 'contain', filter: 'brightness(0) invert(1)', opacity: 0.85 }} />
+              <span
+                style={{
+                  fontFamily: "'Manrope', 'Inter', sans-serif",
+                  fontWeight: 800,
+                  fontSize: '1.15rem',
+                  color: '#fff',
+                  lineHeight: 1,
+                }}
+              >
+                WorkspaceFlow
+              </span>
             </Link>
-            <p>AI-powered automation for Google Workspace. Save 30+ minutes every day with intelligent briefings, natural language commands, and automated rules.</p>
+            <p>A Google Workspace automation system for teams that want briefings, AI commands, and repeatable workflows in one place.</p>
           </div>
 
           <div className="footer-col">
             <h4>Product</h4>
             <Link href="/#features">Features</Link>
-            <Link href="/pricing">Pricing</Link>
+            <Link href="/#automation-library">Automation Library</Link>
             <Link href="/#how-it-works">How It Works</Link>
             <Link href="/#briefing-preview">Briefing Preview</Link>
           </div>
@@ -31,19 +42,19 @@ export default function Footer() {
 
           <div className="footer-col">
             <h4>Legal</h4>
-            <Link href="#">Privacy Policy</Link>
-            <Link href="#">Terms of Service</Link>
-            <Link href="#">Cookie Policy</Link>
-            <Link href="#">Security</Link>
+            <Link href="/privacy">Privacy Policy</Link>
+            <Link href="/terms">Terms of Service</Link>
+            <Link href="/privacy">Cookie Policy</Link>
+            <Link href="/privacy">Security</Link>
           </div>
         </div>
 
         <div className="footer-bottom">
           <span>© 2026 WorkspaceFlow. All rights reserved.</span>
           <div style={{ display: 'flex', gap: '16px' }}>
-            <Link href="#">Twitter</Link>
-            <Link href="#">LinkedIn</Link>
-            <Link href="#">GitHub</Link>
+            <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>Twitter</Link>
+            <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>LinkedIn</Link>
+            <Link href="#" style={{ color: 'rgba(255,255,255,0.35)' }}>GitHub</Link>
           </div>
         </div>
       </div>

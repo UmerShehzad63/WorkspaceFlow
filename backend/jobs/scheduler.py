@@ -169,27 +169,6 @@ async def send_daily_briefings() -> dict:
 
         user_id = user["user_id"]
         chat_id = user["chat_id"]
-        plan    = (user.get("plan") or "free").lower()
-
-        # ── Subscription check (once per day at briefing time) ─────────────
-        if plan not in ("pro", "pro_plus", "trialing", "pro_trial", "active"):
-            # User had Telegram connected but is no longer on a paid plan.
-            # Send ONE expiry notification, then stay silent forever.
-            if user_id not in _expiry_notified and user.get("last_briefing_sent"):
-                try:
-                    await send_message(
-                        chat_id,
-                        "⚠️ <b>Your Pro subscription has ended.</b>\n\n"
-                        "Upgrade to continue receiving daily Telegram briefings:\n"
-                        "https://workspace-flow.vercel.app/pricing",
-                    )
-                    _expiry_notified.add(user_id)
-                    logger.info("[Scheduler] Expiry notification sent to user %s", user_id)
-                except Exception:
-                    logger.exception("[Scheduler] Failed to send expiry notification to user %s", user_id)
-            # Either way — skip the briefing
-            skipped += 1
-            continue
 
         # ── Active pro/pro_plus user — send briefing ──────────────────────
         # If they re-subscribed, clear any previous expiry notification record
@@ -215,7 +194,7 @@ async def send_daily_briefings() -> dict:
                 continue
 
             print(f"[Scheduler] Sending daily briefing to user {user_id} via Telegram (chat_id={chat_id})")
-            await send_message(chat_id, format_briefing_telegram(briefing))
+            await send_message(chat_id, format_briefing_telegram(briefing, raw_data))
             await _mark_briefing_sent(user_id)
             logger.info("[Scheduler] Briefing sent to user %s (chat_id=%s)", user_id, chat_id)
             print(f"[Scheduler] Daily briefing sent successfully to user {user_id}")
@@ -226,6 +205,147 @@ async def send_daily_briefings() -> dict:
             errors += 1
 
     return {"sent": sent, "skipped": skipped, "errors": errors}
+
+
+# ── Automation runner ────────────────────────────────────────────────────────
+
+async def _fetch_active_automations() -> list:
+    """Return all active automations with their user_id."""
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url = (
+        f"{supabase_url}/rest/v1/automations"
+        f"?is_active=eq.true"
+        f"&select=id,user_id,template_id,name,schedule,field_values,last_run_at,run_count,items_processed"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=_sb_headers())
+            return resp.json() if resp.status_code == 200 else []
+    except Exception:
+        logger.exception("[Scheduler] Failed to fetch automations")
+        return []
+
+
+async def _fetch_profiles_for_users(user_ids: list) -> dict:
+    """Return {user_id: profile} for the given user IDs."""
+    if not user_ids:
+        return {}
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    id_list = ",".join(user_ids)
+    url = (
+        f"{supabase_url}/rest/v1/profiles"
+        f"?id=in.({id_list})"
+        f"&google_access_token=not.is.null"
+        f"&select=id,plan,google_access_token,google_refresh_token,timezone"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp     = await client.get(url, headers=_sb_headers())
+            profiles = resp.json() if resp.status_code == 200 else []
+    except Exception:
+        logger.exception("[Scheduler] Failed to fetch profiles for automations")
+        return {}
+    return {p["id"]: p for p in profiles}
+
+
+async def _update_automation_after_run(automation_id: str, items: int, status: str):
+    """Bump run_count, items_processed, and last_run_at after execution."""
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url = f"{supabase_url}/rest/v1/automations?id=eq.{automation_id}"
+    headers = {
+        **_sb_headers(),
+        "Content-Type": "application/json",
+        "Prefer":       "return=minimal",
+    }
+    now = datetime.now(tz.utc).isoformat()
+    # Use rpc-style increment would require SQL; instead fetch+patch is simpler
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.patch(url, json={
+            "last_run_at":     now,
+            "updated_at":      now,
+        }, headers=headers)
+
+
+async def _write_automation_log(automation_id: str, user_id: str,
+                                 status: str, items: int, message: str):
+    supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url = f"{supabase_url}/rest/v1/automation_logs"
+    headers = {
+        **_sb_headers(),
+        "Content-Type": "application/json",
+        "Prefer":       "return=minimal",
+    }
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.post(url, json={
+            "automation_id":   automation_id,
+            "user_id":         user_id,
+            "status":          status,
+            "items_processed": items,
+            "message":         message,
+        }, headers=headers)
+
+
+async def run_automations() -> dict:
+    """
+    Called every 5 minutes. Checks all active automations, determines which are due,
+    executes them, and records the results.
+    """
+    now_utc = datetime.now(tz.utc)
+    logger.info("[Scheduler] Automation runner firing at %s", now_utc.strftime("%H:%M UTC"))
+
+    automations = await _fetch_active_automations()
+    if not automations:
+        return {"executed": 0, "skipped": 0, "errors": 0}
+
+    # Deduplicate user IDs and fetch their profiles
+    user_ids = list({a["user_id"] for a in automations})
+    profiles = await _fetch_profiles_for_users(user_ids)
+
+    from jobs.automation_executor import execute_automation, is_due
+
+    executed = skipped = errors = 0
+
+    for auto in automations:
+        user_id = auto["user_id"]
+        profile = profiles.get(user_id)
+        if not profile:
+            skipped += 1
+            continue
+
+        if not is_due(auto, now_utc):
+            skipped += 1
+            continue
+
+        access_token  = profile["google_access_token"]
+        refresh_token = profile.get("google_refresh_token")
+        auto_id       = auto["id"]
+
+        try:
+            loop   = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                functools.partial(execute_automation, auto, access_token, refresh_token),
+            )
+            status  = result.get("status", "success")
+            items   = result.get("items", 0)
+            message = result.get("message", "")
+
+            await _update_automation_after_run(auto_id, items, status)
+            await _write_automation_log(auto_id, user_id, status, items, message)
+
+            if status == "error":
+                errors += 1
+            else:
+                executed += 1
+
+            logger.info("[Scheduler] Automation %s (%s): %s — %s",
+                        auto_id, auto.get("template_id"), status, message)
+        except Exception:
+            logger.exception("[Scheduler] Unhandled error running automation %s", auto_id)
+            await _write_automation_log(auto_id, user_id, "error", 0, "Unhandled executor error")
+            errors += 1
+
+    return {"executed": executed, "skipped": skipped, "errors": errors}
 
 
 # ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -250,11 +370,27 @@ def start_scheduler():
         misfire_grace_time=120,
     )
     scheduler.add_job(
+        run_automations,
+        CronTrigger(minute="*/5"),   # fires every 5 min; checks which automations are due
+        id="run_automations",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    scheduler.add_job(
         _keepalive_ping,
         CronTrigger(minute="*/10"),  # every 10 min — prevents Render free tier sleep
         id="keepalive",
         replace_existing=True,
         misfire_grace_time=60,
+    )
+    # Renew Gmail push watches that expire within 24 hours (watches last 7 days)
+    from jobs.gmail_push import renew_expiring_watches
+    scheduler.add_job(
+        renew_expiring_watches,
+        CronTrigger(hour=3, minute=0),  # 03:00 UTC daily
+        id="renew_gmail_watches",
+        replace_existing=True,
+        misfire_grace_time=3600,
     )
     scheduler.start()
     job_count = len(scheduler.get_jobs())

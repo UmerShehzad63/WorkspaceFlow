@@ -4,20 +4,21 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import styles from './setup.module.css';
 
-// Generate beautifully formatted timezones (e.g. "America/New_York" -> "America - New York")
-const rawTimezones = typeof Intl !== 'undefined' && Intl.supportedValuesOf 
-  ? Intl.supportedValuesOf('timeZone') 
+const rawTimezones = typeof Intl !== 'undefined' && Intl.supportedValuesOf
+  ? Intl.supportedValuesOf('timeZone')
   : ['America/New_York', 'Europe/London', 'Asia/Tokyo'];
 
-const TIMEZONES = rawTimezones.map(tz => {
-  const parts = tz.split('/');
-  const region = parts[0].replace(/_/g, ' ');
-  const city = parts.slice(1).join(' - ').replace(/_/g, ' ');
-  return {
-    value: tz,
-    label: city ? `${region} - ${city}` : region
-  };
-}).sort((a, b) => a.label.localeCompare(b.label));
+const TIMEZONES = rawTimezones
+  .map((tz) => {
+    const parts = tz.split('/');
+    const region = parts[0].replace(/_/g, ' ');
+    const city = parts.slice(1).join(' - ').replace(/_/g, ' ');
+    return {
+      value: tz,
+      label: city ? `${region} - ${city}` : region,
+    };
+  })
+  .sort((a, b) => a.label.localeCompare(b.label));
 
 export default function SetupPage() {
   const router = useRouter();
@@ -29,8 +30,8 @@ export default function SetupPage() {
   const [userEmail, setUserEmail] = useState('');
 
   useState(() => {
-    import('@/lib/supabase').then(({ supabase }) => {
-      supabase.auth.getSession().then(({ data: { session } }) => {
+    import('@/lib/supabase').then(({ supabase: sb }) => {
+      sb.auth.getSession().then(({ data: { session } }) => {
         if (session?.user?.email) setUserEmail(session.user.email);
       });
     });
@@ -39,21 +40,20 @@ export default function SetupPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
-    
-    // Save preferences to Supabase
+
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
       await supabase
         .from('profiles')
         .update({
-          briefing_time:   time,
-          timezone:        timezone,
+          briefing_time: time,
+          timezone,
           delivery_method: delivery,
           setup_completed: true,
         })
         .eq('id', session.user.id);
     }
-    
+
     router.push('/welcome');
   };
 
@@ -78,49 +78,40 @@ export default function SetupPage() {
         </div>
 
         <h1 className={styles.title}>Quick Setup</h1>
-        <p className={styles.subtitle}>Just a few preferences and you&apos;re good to go.</p>
+        <p className={styles.subtitle}>Choose when and where WorkspaceFlow should deliver your daily automation briefing.</p>
 
         <form onSubmit={handleSubmit} className={styles.form}>
           <div className={styles.formGroup}>
-            <label className="input-label">⏰ When should we send your briefing?</label>
-            <input
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
-              className="input"
-            />
+            <label className="input-label">When should we send your briefing?</label>
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="input" />
           </div>
 
           <div className={styles.formGroup}>
-            <label className="input-label">🌍 Your timezone</label>
+            <label className="input-label">Your timezone</label>
             <input
               list="timezone-options"
               value={searchValue}
               onChange={(e) => {
                 setSearchValue(e.target.value);
-                // Try to find the matching timezone value from the beautiful label
-                const match = TIMEZONES.find(t => t.label === e.target.value);
+                const match = TIMEZONES.find((tz) => tz.label === e.target.value);
                 if (match) setTimezone(match.value);
               }}
               className="input"
-              placeholder="Search by region or city (e.g. Europe - London)"
+              placeholder="Search by region or city"
               autoComplete="off"
             />
             <datalist id="timezone-options">
-              {TIMEZONES.map(tz => (
+              {TIMEZONES.map((tz) => (
                 <option key={tz.value} value={tz.label}>{tz.value}</option>
               ))}
             </datalist>
-            <span className={styles.hint}>Current selected underlying timezone: {timezone}</span>
+            <span className={styles.hint}>Selected timezone: {timezone}</span>
           </div>
 
           <div className={styles.formGroup}>
-            <label className="input-label">📬 How should we deliver it?</label>
+            <label className="input-label">How should we deliver it?</label>
             <div className="radio-group">
-              <label
-                className={`radio-label ${delivery === 'email' ? 'selected' : ''}`}
-                onClick={() => setDelivery('email')}
-              >
+              <label className={`radio-label ${delivery === 'email' ? 'selected' : ''}`} onClick={() => setDelivery('email')}>
                 <div className="radio-dot" />
                 <div>
                   <strong style={{ display: 'block', fontSize: '0.9rem' }}>Email</strong>
@@ -129,28 +120,22 @@ export default function SetupPage() {
                   </span>
                 </div>
               </label>
-              <label
-                className={`radio-label ${delivery === 'telegram' ? 'selected' : ''}`}
-                onClick={() => setDelivery('telegram')}
-              >
+              <label className={`radio-label ${delivery === 'telegram' ? 'selected' : ''}`} onClick={() => setDelivery('telegram')}>
                 <div className="radio-dot" />
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                  <div>
-                    <strong style={{ display: 'block', fontSize: '0.9rem' }}>Telegram ✈️ <span style={{ fontSize: '0.7rem', color: 'var(--accent-blue)' }}>Pro</span></strong>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
-                      Connect your bot from the dashboard sidebar
-                    </span>
-                  </div>
-                  <span className="badge badge-pro" style={{ marginLeft: 'auto' }}>PRO</span>
+                <div>
+                  <strong style={{ display: 'block', fontSize: '0.9rem' }}>Telegram</strong>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                    Connect the bot from the dashboard sidebar after setup
+                  </span>
                 </div>
               </label>
             </div>
           </div>
 
           <button type="submit" disabled={saving} className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: '8px', border: 'none', fontFamily: 'inherit' }}>
-            {saving ? 'Saving...' : 'Start my 3-day trial →'}
+            {saving ? 'Saving...' : 'Finish setup →'}
           </button>
-          <p className={styles.trialNote}>No credit card required · Full Pro access for 3 days</p>
+          <p className={styles.trialNote}>You can change briefing time, timezone, and delivery later in Settings.</p>
         </form>
       </div>
     </div>

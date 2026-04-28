@@ -261,29 +261,44 @@ function RecipientDisambiguation({ result, onPick }) {
 }
 
 function FileDisambiguation({ result, onPick }) {
+  const candidates = result.candidates || [];
   return (
     <div>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '14px' }}>
-        Found multiple files matching <strong>&quot;{result.query}&quot;</strong>. Which one?
+        {candidates.length === 0
+          ? <>No file named <strong>&quot;{result.query}&quot;</strong> was found in your Google Drive.</>
+          : <>Found {candidates.length} files matching <strong>&quot;{result.query}&quot;</strong>. Which one?</>}
       </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {result.candidates.map((f, i) => (
-          <button key={i} onClick={() => onPick({ file_id: f.id, filename: f.name })}
-            style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '10px 14px', background: 'var(--bg-secondary)',
-              border: '1px solid var(--border-color)', borderRadius: '8px',
-              cursor: 'pointer', textAlign: 'left', width: '100%',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{f.name}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{f.type} · {f.modified ? new Date(f.modified).toLocaleDateString() : ''}</div>
-            </div>
-            <span style={{ fontSize: '0.78rem', color: 'var(--accent-blue)' }}>Select →</span>
-          </button>
-        ))}
-      </div>
+      {candidates.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+          {candidates.map((f, i) => (
+            <button key={i} onClick={() => onPick({ file_id: f.id, filename: f.name })}
+              style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '10px 14px', background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)', borderRadius: '8px',
+                cursor: 'pointer', textAlign: 'left', width: '100%',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>{f.name}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{f.type} · {f.modified ? new Date(f.modified).toLocaleDateString() : ''}</div>
+              </div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--accent-blue)' }}>Select →</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={() => onPick({ skip_attachment: true })}
+        style={{
+          width: '100%', padding: '9px 14px', background: 'var(--bg-secondary)',
+          border: '1px dashed var(--border-color)', borderRadius: '8px',
+          cursor: 'pointer', fontSize: '0.84rem', color: 'var(--text-secondary)', textAlign: 'center',
+        }}
+      >
+        📧 Send email without attachment
+      </button>
     </div>
   );
 }
@@ -294,6 +309,28 @@ function UnsupportedResult({ result }) {
       <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.7, margin: 0 }}>
         {result.message || "I'm not sure how to help with that using Google Workspace."}
       </p>
+    </div>
+  );
+}
+
+function ErrorResult({ result, onPick }) {
+  return (
+    <div style={{ padding: '4px 0' }}>
+      <p style={{ fontSize: '0.88rem', color: '#ef4444', lineHeight: 1.7, marginBottom: result.allow_skip_attachment ? '14px' : 0 }}>
+        ⚠️ {result.error}
+      </p>
+      {result.allow_skip_attachment && onPick && (
+        <button
+          onClick={() => onPick({ skip_attachment: true })}
+          style={{
+            width: '100%', padding: '9px 14px', background: 'var(--bg-secondary)',
+            border: '1px dashed var(--border-color)', borderRadius: '8px',
+            cursor: 'pointer', fontSize: '0.84rem', color: 'var(--text-secondary)', textAlign: 'center',
+          }}
+        >
+          📧 Send email without attachment anyway
+        </button>
+      )}
     </div>
   );
 }
@@ -309,6 +346,7 @@ export default function ResultDisplay({ intent, result, onDisambiguationPick }) 
   if (t === 'calendar_create') return <CalendarCreateResult result={result} />;
   if (t === 'drive_search')    return <DriveSearchResult result={result} />;
   if (t === 'unsupported')     return <UnsupportedResult result={result} />;
+  if (t === 'error')           return <ErrorResult result={result} onPick={onDisambiguationPick} />;
   if (t === 'needs_disambiguation' && result.kind === 'recipient')
     return <RecipientDisambiguation result={result} onPick={onDisambiguationPick} />;
   if (t === 'needs_disambiguation' && result.kind === 'file')

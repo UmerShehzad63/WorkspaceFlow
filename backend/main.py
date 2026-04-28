@@ -73,7 +73,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -113,15 +113,15 @@ ALLOWED_UPLOAD_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 
-# ── Health check ─────────────────────────────────────────────────────────────
-@app.get("/health")
+# ── Health check (registered before other routers to guarantee no conflicts) ─
+@app.get("/health", response_class=JSONResponse, status_code=200, include_in_schema=False)
 async def health():
-    """Unauthenticated liveness probe for Fly.io / Docker HEALTHCHECK."""
-    return {"status": "ok"}
+    """Unauthenticated liveness probe for Render/Render health checks."""
+    return JSONResponse(content={"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}, status_code=200)
 
 @app.get("/")
 async def root():
-    return {"status": "WorkspaceFlow Backend Online", "model": "gpt-4o-mini (OpenAI)"}
+    return {"status": "ok"}
 
 
 # ── Morning Briefing — schedule only (fast, ~1-2 s) ─────────────────────────
@@ -152,8 +152,9 @@ async def get_briefing_schedule(request: Request):
         schedule = await loop.run_in_executor(
             None, functools.partial(fetch_schedule_only, access_token, refresh_token)
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch calendar: {str(e)[:200]}")
+    except Exception:
+        logger.exception("Failed to fetch calendar schedule (user_id=%s)", user_id)
+        raise HTTPException(status_code=502, detail="Failed to fetch calendar. Try reconnecting your Google account.")
 
     return {"schedule": schedule}
 
@@ -222,29 +223,50 @@ async def run_command(request: Request):
     overrides    = data.get("overrides") or {}
     preview_only = bool(data.get("preview_only", False))
     req_timezone = (data.get("timezone") or "").strip() or "UTC"
+    try:
+        import zoneinfo
+        if req_timezone not in zoneinfo.available_timezones():
+            req_timezone = "UTC"
+    except Exception:
+        pass
 
     if not command:
         raise HTTPException(status_code=400, detail="Command cannot be empty")
     if len(command) > 500:
         raise HTTPException(status_code=400, detail="Command too long (max 500 characters)")
 
-    intent = await parse_command_intent(command, user_timezone=req_timezone)
-    if not isinstance(intent, dict) or "service" not in intent:
-        raise HTTPException(status_code=503, detail="AI service unavailable. Try again shortly.")
-
+    # ── Fetch profile + parse intent IN PARALLEL (saves ~300ms) ─────────────
+    import datetime as _dt
     supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    profile_url  = f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token,timezone"
-    g_headers    = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+    # Single profile fetch covers plan check + Google tokens — no second round-trip
+    profile_url  = (
+        f"{supabase_url}/rest/v1/profiles?id=eq.{user_id}"
+        f"&select=plan,cmd_daily_count,cmd_daily_date,google_access_token,google_refresh_token,timezone"
+    )
+    svc_headers  = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp     = await client.get(profile_url, headers=g_headers)
-        profiles = resp.json() if resp.status_code == 200 else []
+    async def _fetch_profile():
+        async with httpx.AsyncClient(timeout=10.0) as _cl:
+            r = await _cl.get(profile_url, headers=svc_headers)
+            return r.json() if r.status_code == 200 else []
+
+    # Run profile fetch and intent parsing concurrently
+    profiles, intent = await asyncio.gather(
+        _fetch_profile(),
+        parse_command_intent(command, user_timezone=req_timezone),
+    )
+
+    if not isinstance(intent, dict) or "service" not in intent:
+        raise HTTPException(status_code=503, detail="AI service unavailable. Try again shortly.")
 
     if not profiles:
         raise HTTPException(status_code=404, detail="User profile not found")
 
     profile       = profiles[0]
+
+    # ── Free-plan daily command limit ─────────────────────────────────────────
+
     access_token  = profile.get("google_access_token")
     refresh_token = profile.get("google_refresh_token")
     user_timezone = profile.get("timezone") or "UTC"
@@ -293,6 +315,11 @@ async def run_command(request: Request):
             params.get("file") or params.get("filename") or ""
         ).strip()
         file_id_override = (overrides.get("file_id") or "").strip()
+        skip_attachment  = bool(overrides.get("skip_attachment"))
+        if skip_attachment:
+            drive_filename = ""
+            params.pop("drive_file", None)
+            params.pop("attachment", None)
         if drive_filename and not file_id_override:
             from command_executor import find_file_candidates, _build_creds, _GDRIVE_TYPE_LABELS
             loop2 = asyncio.get_event_loop()
@@ -309,14 +336,14 @@ async def run_command(request: Request):
                 return {
                     "intent": intent,
                     "result": {
-                        "type": "needs_disambiguation",
-                        "kind": "file",
-                        "query": drive_filename,
-                        "candidates": [],
+                        "type": "error",
+                        "error": f"No file named \"{drive_filename}\" found in your Google Drive. "
+                                 "You can try a different name or send the email without an attachment.",
+                        "allow_skip_attachment": True,
                         "current_overrides": {**overrides, "recipient_email": to},
                     },
                     "preview_only": False,
-                    "needs_disambiguation": True,
+                    "needs_disambiguation": False,
                 }
             if len(file_cands) > 1:
                 return {
@@ -350,7 +377,8 @@ async def run_command(request: Request):
         # ── Step 2: Generate email content ────────────────────────────────
         subject = (params.get("subject") or "").strip()
         body    = (params.get("body") or params.get("message") or params.get("content") or "").strip()
-        if not subject or not body:
+        # Regenerate if subject/body missing or body is too short (likely a stub from intent parser)
+        if not subject or not body or len(body) < 80:
             from ai_engine import generate_email_content
             meta        = user.get("user_metadata") or {}
             sender_name = (meta.get("full_name") or meta.get("name") or "").strip()
@@ -358,9 +386,9 @@ async def run_command(request: Request):
                 sender_name = (user.get("email") or "").split("@")[0]
             to_name   = (params.get("_to_name") or "").strip()
             generated = await generate_email_content(command, to, sender_name=sender_name, to_name=to_name)
-            if not subject and generated.get("subject"):
+            if generated.get("subject"):
                 params["subject"] = generated["subject"]
-            if not body and generated.get("body"):
+            if generated.get("body"):
                 params["body"] = generated["body"]
         intent["parameters"] = params
 
@@ -443,8 +471,8 @@ async def run_command(request: Request):
         match = _re.search(r'"message":\s*"([^"]+)"', error_str)
         if match:
             raise HTTPException(status_code=502, detail=f"Google API error: {match.group(1)}")
-        # Surface the raw error (truncated) rather than a useless generic message
-        raise HTTPException(status_code=502, detail=f"Command failed: {str(e)[:200]}")
+        logger.exception("Command execution failed (user_id=%s)", user_id)
+        raise HTTPException(status_code=502, detail="Command execution failed. Please try again.")
 
     if isinstance(result, dict) and result.get("type") == "error":
         raise HTTPException(status_code=422, detail=result["error"])
@@ -647,8 +675,13 @@ async def contact_support(
 @app.get("/api/test")
 @limiter.limit("10/minute")
 async def test_connectivity(request: Request):
-    """Authenticated connectivity check — prevents config enumeration."""
-    await require_auth(request)
+    """Admin-only connectivity check — requires ADMIN_SECRET header."""
+    admin_secret = os.getenv("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(status_code=503, detail="Diagnostic endpoint not configured")
+    provided = request.headers.get("X-Admin-Secret", "")
+    if not provided or not _secrets.compare_digest(provided, admin_secret):
+        raise HTTPException(status_code=403, detail="Forbidden")
     results = {}
 
     from ai_engine import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
@@ -698,16 +731,16 @@ async def test_connectivity(request: Request):
 async def send_all_briefings(request: Request):
     """
     External cron endpoint — triggers daily briefings for all due users.
-    Secure with CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
-    Set up a free cron job at cron-job.org to hit this endpoint daily at your chosen time.
-    Example: POST https://workspaceflow-backend.onrender.com/api/briefing/send-all
-             Authorization: Bearer <your-CRON_SECRET>
+    Requires CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
     """
+    import secrets as _secrets
     cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret:
-        auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {cron_secret}":
-            raise HTTPException(status_code=401, detail="Unauthorized")
+    if not cron_secret:
+        raise HTTPException(status_code=503, detail="Cron endpoint not configured")
+    auth = request.headers.get("Authorization", "")
+    provided = auth.removeprefix("Bearer ").strip()
+    if not _secrets.compare_digest(provided, cron_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     from jobs.scheduler import send_daily_briefings
     print("[Cron] /api/briefing/send-all triggered")
@@ -722,20 +755,236 @@ async def send_daily_briefings_endpoint(request: Request):
     """
     External cron endpoint — triggers daily briefings for all due users.
     Returns: {"sent": N, "skipped": M, "errors": P}
-    Secure with CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
-    Setup: cron-job.org → POST https://workspaceflow-backend.onrender.com/api/briefing/send-daily
-    Schedule: Every day at 8:00 AM (or your preferred time)
+    Requires CRON_SECRET env var: set Authorization: Bearer <CRON_SECRET> in cron headers.
     """
+    import secrets as _secrets
     cron_secret = os.getenv("CRON_SECRET", "")
-    if cron_secret:
-        auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {cron_secret}":
-            raise HTTPException(status_code=401, detail="Unauthorized")
+    if not cron_secret:
+        raise HTTPException(status_code=503, detail="Cron endpoint not configured")
+    auth = request.headers.get("Authorization", "")
+    provided = auth.removeprefix("Bearer ").strip()
+    if not _secrets.compare_digest(provided, cron_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     from jobs.scheduler import send_daily_briefings
     print("[Cron] /api/briefing/send-daily triggered")
     counts = await send_daily_briefings()
     return counts if isinstance(counts, dict) else {"sent": 0, "skipped": 0, "errors": 0}
+
+
+# ── Automations CRUD ─────────────────────────────────────────────────────────
+
+def _sb_service_headers() -> dict:
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    return {
+        "Authorization": f"Bearer {key}",
+        "apikey":        key,
+        "Content-Type":  "application/json",
+    }
+
+
+@app.get("/api/automations")
+@limiter.limit("30/minute")
+async def list_automations(request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+    sb_url  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url = (
+        f"{sb_url}/rest/v1/automations"
+        f"?user_id=eq.{user_id}"
+        f"&order=created_at.desc"
+        f"&select=id,template_id,name,description,schedule,field_values,"
+        f"is_active,last_run_at,run_count,items_processed,created_at"
+    )
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url, headers=_sb_service_headers())
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Failed to fetch automations")
+    return resp.json()
+
+
+@app.post("/api/automations")
+@limiter.limit("30/minute")
+async def create_automation(request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+    data    = await request.json()
+
+    # Plan + automation count check — fetch both IN PARALLEL
+    sb_url  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    payload = {
+        "user_id":      user_id,
+        "template_id":  data.get("template_id", ""),
+        "name":         (data.get("name") or "")[:200],
+        "description":  (data.get("description") or "")[:500],
+        "schedule":     (data.get("schedule") or "")[:100],
+        "field_values": data.get("field_values") or {},
+        "is_active":    True,
+    }
+    url = f"{sb_url}/rest/v1/automations"
+    headers = {**_sb_service_headers(), "Prefer": "return=representation"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=502, detail="Failed to save automation")
+    rows = resp.json()
+    return rows[0] if rows else {}
+
+
+@app.patch("/api/automations/{automation_id}")
+@limiter.limit("30/minute")
+async def update_automation(automation_id: str, request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+    data    = await request.json()
+
+    allowed = {"name", "description", "schedule", "field_values", "is_active"}
+    patch   = {k: v for k, v in data.items() if k in allowed}
+    if not patch:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    sb_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url    = f"{sb_url}/rest/v1/automations?id=eq.{automation_id}&user_id=eq.{user_id}"
+    headers = {**_sb_service_headers(), "Prefer": "return=representation"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.patch(url, json=patch, headers=headers)
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail="Failed to update automation")
+    rows = resp.json() if resp.content else []
+    return rows[0] if rows else {"ok": True}
+
+
+@app.delete("/api/automations/{automation_id}")
+@limiter.limit("30/minute")
+async def delete_automation(automation_id: str, request: Request):
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    sb_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    url    = f"{sb_url}/rest/v1/automations?id=eq.{automation_id}&user_id=eq.{user_id}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.delete(url, headers=_sb_service_headers())
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail="Failed to delete automation")
+    return {"ok": True}
+
+
+@app.post("/api/automations/{automation_id}/run")
+@limiter.limit("10/minute")
+async def run_automation_now(automation_id: str, request: Request):
+    """Manually trigger a single automation (test run)."""
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    sb_url  = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    # Fetch the automation
+    url = f"{sb_url}/rest/v1/automations?id=eq.{automation_id}&user_id=eq.{user_id}&select=*"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url, headers=_sb_service_headers())
+    rows = resp.json() if resp.status_code == 200 else []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    automation = rows[0]
+
+    # Fetch user's Google tokens
+    profile_url = f"{sb_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        presp    = await client.get(profile_url, headers=_sb_service_headers())
+        profiles = presp.json() if presp.status_code == 200 else []
+    if not profiles or not profiles[0].get("google_access_token"):
+        raise HTTPException(status_code=400, detail="Google account not connected.")
+
+    profile       = profiles[0]
+    access_token  = profile["google_access_token"]
+    refresh_token = profile.get("google_refresh_token")
+
+    from jobs.automation_executor import execute_automation
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        functools.partial(execute_automation, automation, access_token, refresh_token),
+    )
+
+    # Update last_run_at
+    now = datetime.now(timezone.utc).isoformat()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.patch(
+            f"{sb_url}/rest/v1/automations?id=eq.{automation_id}",
+            json={"last_run_at": now, "updated_at": now},
+            headers={**_sb_service_headers(), "Prefer": "return=minimal"},
+        )
+
+    return result
+
+
+# ── Gmail Push Notifications ──────────────────────────────────────────────────
+
+@app.post("/api/gmail/watch")
+@limiter.limit("10/minute")
+async def register_gmail_watch_endpoint(request: Request):
+    """
+    Register (or renew) Gmail push watch for the authenticated user.
+    Call this after saving an "on new email" automation.
+    Requires GMAIL_PUBSUB_TOPIC env var to be configured.
+    """
+    user    = await require_auth(request)
+    user_id = user["id"]
+
+    sb_url      = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    profile_url = f"{sb_url}/rest/v1/profiles?id=eq.{user_id}&select=google_access_token,google_refresh_token"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        presp    = await client.get(profile_url, headers=_sb_service_headers())
+        profiles = presp.json() if presp.status_code == 200 else []
+
+    if not profiles or not profiles[0].get("google_access_token"):
+        raise HTTPException(status_code=400, detail="Google account not connected.")
+
+    profile      = profiles[0]
+    from jobs.gmail_push import register_gmail_watch
+    result = await register_gmail_watch(
+        user_id,
+        profile["google_access_token"],
+        profile.get("google_refresh_token"),
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return {"ok": True, "historyId": result.get("historyId"), "expiration": result.get("expiration")}
+
+
+@app.post("/api/gmail/webhook")
+@limiter.limit("60/minute")
+async def gmail_webhook(request: Request):
+    """
+    Receives Gmail push notifications from Google Cloud Pub/Sub.
+
+    Google sends a POST with:
+      { "message": { "data": "<base64url JSON>", "messageId": "...", "publishTime": "..." },
+        "subscription": "..." }
+
+    Must respond 2xx to acknowledge; Pub/Sub retries on 5xx.
+    Optional security: set GMAIL_WEBHOOK_SECRET and pass it as ?token=SECRET
+    in the Pub/Sub subscription push endpoint URL.
+    """
+    import secrets as _secrets
+    secret = os.getenv("GMAIL_WEBHOOK_SECRET", "")
+    if not secret:
+        logger.error("[Gmail Webhook] GMAIL_WEBHOOK_SECRET not set — rejecting request")
+        return JSONResponse({"ok": False}, status_code=200)  # 200 to avoid Pub/Sub retries
+    token = request.query_params.get("token", "")
+    if not token or not _secrets.compare_digest(token, secret):
+        return JSONResponse({"ok": False}, status_code=200)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=200)
+
+    from jobs.gmail_push import process_push_notification
+    result = await process_push_notification(body)
+    logger.info("[Gmail Webhook] result: %s", result)
+    return JSONResponse({"ok": True, **result}, status_code=200)
 
 
 if __name__ == "__main__":

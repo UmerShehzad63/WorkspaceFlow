@@ -6,44 +6,56 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = "gpt-4o-mini"
 OPENAI_BASE_URL = "https://api.openai.com/v1/chat/completions"
 
+# Persistent client — avoids per-request SSL handshake overhead
+_http_client: httpx.AsyncClient | None = None
 
-async def _call_openai(messages: list):
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _http_client
+
+
+async def _call_openai(messages: list, max_tokens: int = 600):
     """Call OpenAI chat completions API."""
     if not OPENAI_API_KEY:
         return {"error": "OPENAI_API_KEY not configured"}
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                OPENAI_BASE_URL,
-                json={
-                    "model": OPENAI_MODEL,
-                    "messages": messages,
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.3,
-                    "max_tokens": 2048,
-                },
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-            )
+        client = _get_http_client()
+        response = await client.post(
+            OPENAI_BASE_URL,
+            json={
+                "model": OPENAI_MODEL,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+                "temperature": 0.3,
+                "max_tokens": max_tokens,
+            },
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
 
-            if response.status_code == 429:
-                return {"error": "OpenAI rate limit hit. Try again shortly."}
+        if response.status_code == 429:
+            return {"error": "OpenAI rate limit hit. Try again shortly."}
 
-            response.raise_for_status()
+        response.raise_for_status()
 
-            try:
-                result = response.json()
-                content = result["choices"][0]["message"]["content"]
-            except (json.JSONDecodeError, KeyError, IndexError) as e:
-                return {"raw": response.text, "error": f"Unexpected OpenAI response format: {e}"}
+        try:
+            result = response.json()
+            content = result["choices"][0]["message"]["content"]
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            return {"raw": response.text, "error": f"Unexpected OpenAI response format: {e}"}
 
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                return {"raw": content, "error": "OpenAI returned non-JSON content"}
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return {"raw": content, "error": "OpenAI returned non-JSON content"}
 
     except httpx.HTTPStatusError as e:
         print(f"[OpenAI] HTTP error: {e.response.status_code}")
@@ -163,7 +175,7 @@ ABSOLUTE RULES:
         },
         {"role": "user", "content": prompt},
     ]
-    return await _call_openai(messages)
+    return await _call_openai(messages, max_tokens=900)
 
 
 async def parse_command_intent(command: str, user_timezone: str = "UTC"):
@@ -193,93 +205,135 @@ async def parse_command_intent(command: str, user_timezone: str = "UTC"):
     next_monday  = (today + timedelta(days=days_until_monday)).strftime("%Y-%m-%d")
     next_sunday  = (today + timedelta(days=days_until_monday + 6)).strftime("%Y-%m-%d")
 
-    prompt = f"""You are an AI assistant for WorkspaceFlow, a Google Workspace automation tool.
-Parse the user command and return a structured JSON action plan.
+    prompt = f"""You are the intent parser for WorkspaceFlow, a Google Workspace AI assistant.
+The user can control Gmail, Google Calendar, and Google Drive using natural language.
 
-TODAY: {today_iso} ({today.strftime('%A')})
-USER_TIMEZONE: {user_timezone}
-DATE ANCHORS (use these exactly):
-  today      = {today_iso}
-  tomorrow   = {tomorrow}
-  this week  = {this_monday} to {this_sunday}
-  next week  = {next_monday} to {next_sunday}
+TODAY: {today_iso} ({today.strftime('%A')})  |  USER TIMEZONE: {user_timezone}
+DATE ANCHORS:
+  today     = {today_iso}
+  tomorrow  = {tomorrow}
+  this week = {this_monday} to {this_sunday}
+  next week = {next_monday} to {next_sunday}
 
-Command: "{command}"
+═══════════════════════════════════════════════════════
+WHAT COUCHMAIL CAN DO (all available capabilities):
+═══════════════════════════════════════════════════════
+GMAIL:
+  • Send email to anyone (with or without Drive file attachment)
+  • Reply to an email thread
+  • Search inbox by sender, subject, keyword, date, label
+  • Archive emails by label or keyword
 
-Return ONLY a valid JSON object with these exact keys:
+CALENDAR:
+  • Create/schedule meetings, events, reminders
+  • List/view events for a date range (today, tomorrow, this week, next week, any date)
+  • Delete/cancel/clear events for a date range or by keyword
+  • Search for a specific meeting by name or attendee
+
+DRIVE:
+  • Search for files by name or keyword
+  • Attach any Drive file to an email (PDF, Sheets, Docs, etc.)
+
+═══════════════════════════════════════════════════════
+USER COMMAND: "{command}"
+═══════════════════════════════════════════════════════
+
+Return ONLY this JSON (no markdown, no extra text):
 {{
   "service": "Gmail" | "Calendar" | "Drive" | "Unsupported",
-  "action":  "Send" | "Reply" | "Search" | "Archive" | "Create" | "List" | "Delete" | "None",
+  "action": "Send" | "Reply" | "Search" | "Archive" | "Create" | "List" | "Delete" | "None",
   "parameters": {{
-    // Gmail Send/Reply:       "to", "subject" (optional), "body" (optional), "drive_file" (optional filename)
-    // Gmail Search/Archive:   "from", "subject", "query", "label", "max_results"
-    // Calendar Create:        "summary", "start_time" (ISO, no Z), "end_time" (ISO, no Z), "attendees", "description"
-    // Calendar List (date):   "date_range_start" (YYYY-MM-DDTHH:MM:SS), "date_range_end" (YYYY-MM-DDTHH:MM:SS), "query": null
-    // Calendar Search (word): "query" (keyword only, no date_range keys)
-    // Drive Search:           "query", "filename"
-    // Unsupported:            {{}}
+    /* Gmail Send/Reply  → to, subject (opt), body (opt), drive_file (opt - filename to attach) */
+    /* Gmail Search      → from (opt), subject (opt), query (opt), label (opt), max_results (opt) */
+    /* Gmail Archive     → query */
+    /* Calendar Create   → summary, start_time (ISO YYYY-MM-DDTHH:MM:SS, no Z), end_time (opt), attendees (opt array), description (opt) */
+    /* Calendar List     → date_range_start (ISO), date_range_end (ISO), query: null */
+    /* Calendar Delete   → date_range_start (ISO, opt), date_range_end (ISO, opt), query (opt) */
+    /* Calendar Search   → query */
+    /* Drive Search      → query, filename (opt) */
+    /* Unsupported       → {{}} */
   }},
-  "human_description": "One sentence: exactly what this command will do",
-  "response_message": "For Unsupported only: helpful message suggesting what CAN be done instead. null otherwise."
+  "human_description": "One sentence describing exactly what will happen",
+  "response_message": "For Unsupported only: friendly message explaining what CAN be done. null for all other services."
 }}
 
-ROUTING RULES — follow in strict priority order:
+═══════════════════════════════════════════════════════
+PARSING RULES (strict priority order)
+═══════════════════════════════════════════════════════
 
-1. ACTION VERB beats everything else:
-   - download / get [file from drive] / grab / retrieve → Unsupported
-   - send / email / mail / write email to → Gmail / Send
-   - find emails / search inbox / what did X say / read emails → Gmail / Search
-   - schedule / book / create meeting / add event / set up a call → Calendar / Create
-   - remind me / add reminder → Calendar / Create (create an event as reminder)
-   - delete / remove / clear / cancel [events/meetings/day] → Calendar / Delete
-   - how many events/meetings / what's on my calendar / list my events / do I have anything → Calendar / List
-   - find keyword on calendar → Calendar / Search (keyword query, no date range)
-   - find file / search drive / look for document → Drive / Search
-   - archive / delete emails → Gmail / Archive
+RULE 1 — GMAIL SEND: DOCUMENT NOUNS = DRIVE ATTACHMENT
+  When user says "send/email [NOUN] to [PERSON]" and the noun is a document type,
+  the noun is a DRIVE FILE to attach — not the email body.
+  DOCUMENT NOUNS that always trigger drive_file:
+    transcript, resume, cv, report, invoice, proposal, contract, document, doc,
+    file, pdf, presentation, slides, deck, spreadsheet, sheet, form, certificate,
+    letter, portfolio, assignment, homework, application, brief, memo, statement
+  Examples:
+    "send transcript to umer"        → to="umer", drive_file="transcript"
+    "send my transcript to umer"     → to="umer", drive_file="transcript"
+    "email resume to sarah"          → to="sarah", drive_file="resume"
+    "send the report to john"        → to="john", drive_file="report"
+    "send invoice to client@x.com"   → to="client@x.com", drive_file="invoice"
+    "email cv to recruiter"          → to="recruiter", drive_file="cv"
+    "send proposal to team"          → to="team", drive_file="proposal"
+    "send my assignment to professor" → to="professor", drive_file="assignment"
+  Counter-examples (NO drive_file — message content, not a file):
+    "email john the meeting is at 3pm" → to="john", NO drive_file
+    "tell sarah the proposal is ready" → to="sarah", NO drive_file
+    "write to mark about the project"  → to="mark", NO drive_file
 
-2. CALENDAR LIST with date range — always resolve using DATE ANCHORS above:
-   - "next week" → date_range_start="{next_monday}T00:00:00", date_range_end="{next_sunday}T23:59:59"
-   - "this week" → date_range_start="{this_monday}T00:00:00", date_range_end="{this_sunday}T23:59:59"
-   - "today"     → date_range_start="{today_iso}T00:00:00",   date_range_end="{today_iso}T23:59:59"
-   - "tomorrow"  → date_range_start="{tomorrow}T00:00:00",    date_range_end="{tomorrow}T23:59:59"
-   - Other dates: compute ISO from TODAY={today_iso}
-   - When using date range, set "query" to null (do NOT filter by keyword like "meetings")
+RULE 2 — CALENDAR DATE RANGES: use DATE ANCHORS exactly
+  List/Delete with time words:
+    today     → {today_iso}T00:00:00 to {today_iso}T23:59:59
+    tomorrow  → {tomorrow}T00:00:00 to {tomorrow}T23:59:59
+    this week → {this_monday}T00:00:00 to {this_sunday}T23:59:59
+    next week → {next_monday}T00:00:00 to {next_sunday}T23:59:59
+  When using date range, always set query=null (don't filter by word like "meetings").
+  "cancel my 3pm today" → date_range_start={today_iso}T15:00:00, date_range_end={today_iso}T16:00:00, query="3pm"
 
-3. CALENDAR DELETE with date range — resolve dates same as LIST above:
-   - "clear my day for tomorrow" → date_range_start="{tomorrow}T00:00:00", date_range_end="{tomorrow}T23:59:59"
-   - "remove all meetings today" → date_range_start="{today_iso}T00:00:00", date_range_end="{today_iso}T23:59:59"
-   - "cancel my 3pm" → date_range_start="{today_iso}T15:00:00", date_range_end="{today_iso}T16:00:00", query="3pm"
-   - "delete meeting with X" → query="X" (no date range if not specified)
+RULE 3 — INTENT SIGNALS
+  send/email/mail/write to           → Gmail / Send
+  reply/respond to                   → Gmail / Reply
+  find email/what did X say/search   → Gmail / Search
+  archive/clean up emails            → Gmail / Archive
+  schedule/book/create meeting/event → Calendar / Create
+  remind me / set reminder           → Calendar / Create
+  what's on my calendar/do I have    → Calendar / List
+  delete/remove/clear/cancel meeting → Calendar / Delete
+  find file/search drive/look for doc → Drive / Search
+  download/save locally              → Unsupported
 
-3. GMAIL SEND rules:
-   - "to" = name or email exactly as given (system resolves names to emails)
-   - "drive_file" = filename when user says "send/email [file] to [person]"
-   - NEVER invent body or subject — omit if not specified in command
-   - NEVER put file content in body
+RULE 4 — UNSUPPORTED: be helpful, explain alternatives
+  "I can't [do that], but I can [alternative using Gmail/Calendar/Drive]."
 
-4. UNSUPPORTED friendly messages (use these exact formats):
-   - download/get file → "I can't download files directly, but I can search for it in Google Drive or email it to someone. What would you like to do?"
-   - phone call → "I can't make calls, but I can send an email or schedule a meeting instead."
-   - browse web → "I can't browse the web, but I can search your Gmail, Calendar, or Drive."
-   - other → explain what IS possible with Gmail / Calendar / Drive
-
-5. IMPORTANT EXAMPLES:
-   "how many meetings do I have next week" → Calendar/List, date_range_start="{next_monday}T00:00:00", date_range_end="{next_sunday}T23:59:59", query=null
-   "what's on my calendar today"           → Calendar/List, date_range_start="{today_iso}T00:00:00", date_range_end="{today_iso}T23:59:59"
-   "find emails from sarah about project"  → Gmail/Search, from="sarah", query="project"
-   "download my cv"                        → Unsupported, helpful response_message
-   "send my cv to john"                    → Gmail/Send, to="john", drive_file="cv"
-   "schedule standup tomorrow 9am"         → Calendar/Create, summary="Standup", start_time="{tomorrow}T09:00:00"
-   "remind me about the budget review at 3pm" → Calendar/Create, summary="Budget review reminder", start_time="{today_iso}T15:00:00"
-   "archive all newsletters"               → Gmail/Archive, query="newsletter"
-   "clear my day tomorrow" → Calendar/Delete, date_range_start="{tomorrow}T00:00:00", date_range_end="{tomorrow}T23:59:59"
-   "remove all meetings today" → Calendar/Delete, date_range_start="{today_iso}T00:00:00", date_range_end="{today_iso}T23:59:59"
+═══════════════════════════════════════════════════════
+MORE EXAMPLES
+═══════════════════════════════════════════════════════
+"who sent me rejection mail today"        → Gmail/Search, query="rejection", (date filter today if possible)
+"did anyone email me about the interview" → Gmail/Search, query="interview"
+"find emails from boss about salary"      → Gmail/Search, from="boss", query="salary"
+"what's on my calendar today"            → Calendar/List, range=today
+"how many meetings next week"            → Calendar/List, range=next week
+"schedule standup tomorrow 9am"          → Calendar/Create, summary="Standup", start={tomorrow}T09:00:00
+"book a call with sarah friday 2pm"      → Calendar/Create, summary="Call with Sarah", attendees=["sarah"], start=friday 14:00
+"remind me dentist appointment monday 10am" → Calendar/Create, summary="Dentist appointment", start=monday 10:00
+"cancel all meetings tomorrow"           → Calendar/Delete, range=tomorrow
+"clear my friday"                        → Calendar/Delete, range=friday
+"find my contract in drive"              → Drive/Search, filename="contract"
+"search for project proposal document"  → Drive/Search, query="project proposal"
+"archive all promotions"                 → Gmail/Archive, query="promotions"
 """
 
     messages = [
         {
             "role": "system",
-            "content": "You are a workspace command parser. Return valid JSON only. Never include explanatory text outside the JSON object.",
+            "content": (
+                "You are the intent parser for WorkspaceFlow, a Google Workspace AI assistant. "
+                "Your ONLY job is to parse user commands into structured JSON. "
+                "WorkspaceFlow can send emails, attach Drive files to emails, search Gmail, "
+                "create/list/delete calendar events, and search Google Drive. "
+                "Return valid JSON only — no markdown fences, no explanations outside the JSON."
+            ),
         },
         {"role": "user", "content": prompt},
     ]
@@ -287,28 +341,28 @@ ROUTING RULES — follow in strict priority order:
     return await _call_openai(messages)
 
 
-async def _call_openai_text(messages: list) -> str:
+async def _call_openai_text(messages: list, max_tokens: int = 800) -> str:
     """Call OpenAI without JSON response format enforcement. Returns raw text."""
     if not OPENAI_API_KEY:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                OPENAI_BASE_URL,
-                json={
-                    "model": OPENAI_MODEL,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 1024,
-                },
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]["content"].strip()
+        client = _get_http_client()
+        response = await client.post(
+            OPENAI_BASE_URL,
+            json={
+                "model": OPENAI_MODEL,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+            },
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"[OpenAI Text] Error: {e}")
         return ""

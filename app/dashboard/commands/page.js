@@ -6,7 +6,6 @@ import ResultDisplay from '../components/ResultDisplay';
 import EmailSendPreviewModal from '../components/EmailSendPreviewModal';
 import CalendarCreatePreviewModal from '../components/CalendarCreatePreviewModal';
 import { useCommand } from '../command-context';
-import { usePlan, isPro } from '../plan-context';
 
 const EXAMPLES = [
   'Find the proposal Aisha sent me last month',
@@ -24,7 +23,6 @@ const SERVICE_ICONS = { Gmail: '📧', Calendar: '📅', Drive: '📁' };
 export default function CommandsPage() {
   // Sync command text with global context so "Try:" chips work from either bar
   const { cmdText: command, setCmdText: setCommand } = useCommand();
-  const { plan, openUpgrade } = usePlan();
 
   const [resultState,    setResultState]    = useState(null); // { intent, result } | { error } | null
   const [isExecuting,    setIsExecuting]    = useState(false);
@@ -74,7 +72,7 @@ export default function CommandsPage() {
         return;
       }
 
-      if (data.needs_disambiguation) {
+      if (data.needs_disambiguation || data.result?.allow_skip_attachment) {
         setPendingCommand({ command: commandText, overrides });
         setResultState({ intent: data.intent, result: data.result });
         return;
@@ -99,7 +97,6 @@ export default function CommandsPage() {
     e.preventDefault();
     const trimmed = command.trim();
     if (!trimmed) return;
-    if (!isPro(plan)) { openUpgrade(); return; }
     await runCommand(trimmed);
   };
 
@@ -150,11 +147,12 @@ export default function CommandsPage() {
 
   const service    = resultState?.intent?.service;
   const action     = resultState?.intent?.action;
-  const isDisambig = resultState?.result?.type === 'needs_disambiguation';
-  const badgeLabel = resultState?.error ? 'Error' : (isDisambig ? 'Choose' : (resultState?.result ? 'Done' : null));
+  const isDisambig  = resultState?.result?.type === 'needs_disambiguation';
+  const isFileError = resultState?.result?.type === 'error' && resultState?.result?.allow_skip_attachment;
+  const badgeLabel  = resultState?.error ? 'Error' : (isDisambig || isFileError ? 'Action needed' : (resultState?.result ? 'Done' : null));
   const badgeStyle = resultState?.error
     ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444' }
-    : isDisambig
+    : (isDisambig || isFileError)
     ? { background: 'rgba(251,191,36,0.1)', color: '#f59e0b' }
     : { background: 'rgba(52,211,153,0.1)', color: 'var(--accent-green)' };
 
@@ -163,6 +161,7 @@ export default function CommandsPage() {
       <div className="page-header">
         <h1>Command Bar</h1>
         <p>Type what you want in natural language. We&apos;ll handle the rest.</p>
+        )}
       </div>
 
       {/* Input */}
@@ -214,7 +213,9 @@ export default function CommandsPage() {
             <div className={styles.resultCard}>
               <div className={styles.resultHeader}>
                 <h3>
-                  {isDisambig
+                  {isFileError
+                    ? '📁 File Not Found'
+                    : isDisambig
                     ? (resultState.result.kind === 'recipient' ? '👤 Confirm Recipient' : '📁 Select File')
                     : `${SERVICE_ICONS[service] || '⚡'} ${service}: ${action}`}
                 </h3>

@@ -31,9 +31,11 @@ export default function LoginPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <Link href="/" className="nav-logo" style={{ justifyContent: 'center', marginBottom: '32px', display: 'flex' }}>
-          <div className="nav-logo-icon">⚡</div>
-          WorkspaceFlow
+        <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '32px' }}>
+          <img src="/icon.png" alt="WorkspaceFlow" style={{ height: '52px', width: '52px', objectFit: 'contain' }} />
+          <span style={{ fontFamily: "'Manrope','Inter',sans-serif", fontWeight: 800, fontSize: '1.6rem', color: '#001857', letterSpacing: '-0.02em', lineHeight: 1 }}>
+            WorkspaceFlow
+          </span>
         </Link>
 
         <h1>Connect your Google Workspace</h1>

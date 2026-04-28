@@ -22,12 +22,17 @@ import functools
 import logging
 import os
 import re
+import secrets
 from datetime import datetime, timezone as tz
 from email.utils import parsedate_to_datetime
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -49,12 +54,8 @@ router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 # _sessions: task/service lock — persists for the life of a task
 _conv: dict     = {}
 _sessions: dict = {}  # chat_id → {"task": str, "service": str}
-_plan_warning_sent: dict = {}  # chat_id → datetime: rate-limits "upgrade required" to 1/hr
-
-
 def _is_pro_plan(plan: str) -> bool:
-    """Return True if the plan grants Telegram / Pro feature access."""
-    return (plan or "").lower() in {"pro", "pro_plus", "trialing", "pro_trial", "active"}
+    return True
 
 
 # ── Supabase helpers ────────────────────────────────────────────────────────
@@ -599,7 +600,8 @@ async def _generate_and_preview(chat_id: str, intent: dict, user_id: str,
         else:
             await send_message(chat_id, text)
 
-    if not subject or not body:
+    # Always regenerate if subject/body missing or body is too short (likely a stub from intent parser)
+    if not subject or not body or len(body) < 80:
         await _update_status("📧 Preparing email…")
         from ai_engine import generate_email_content
         sender_name = await _get_user_display_name(user_id)
@@ -608,10 +610,10 @@ async def _generate_and_preview(chat_id: str, intent: dict, user_id: str,
             generated = await generate_email_content(
                 original_command or to, to, sender_name=sender_name, to_name=to_name
             )
-            if not subject and generated.get("subject"):
+            if generated.get("subject"):
                 subject = generated["subject"]
                 params["subject"] = subject
-            if not body and generated.get("body"):
+            if generated.get("body"):
                 body = generated["body"]
                 params["body"] = body
         except Exception:
@@ -894,7 +896,7 @@ async def _execute_email_send(chat_id: str, intent: dict,
 
     except Exception as e:
         logger.exception("[Telegram] Email send failed for chat_id=%s", chat_id)
-        await send_message(chat_id, f"❌ Email failed: {str(e)[:300]}")
+        await send_message(chat_id, "❌ Failed to send email. Please try again.")
 
 
 # ── Calendar delete flow ──────────────────────────────────────────────────────
@@ -936,7 +938,7 @@ async def _handle_calendar_delete(chat_id: str, intent: dict, user_id: str,
             )
         )
     except Exception as e:
-        await send_message(chat_id, f"❌ Could not fetch events: {str(e)[:200]}")
+        await send_message(chat_id, "❌ Could not fetch calendar events. Please try again.")
         return
 
     events = search_result.get("events", [])
@@ -1038,7 +1040,7 @@ async def _route_intent(chat_id: str, intent: dict, user_id: str,
     except Exception as e:
         logger.exception("[Telegram] NL execution failed for chat_id=%s", chat_id)
         _sessions.pop(chat_id, None)
-        await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
+        await send_message(chat_id, "❌ Command failed. Please try again.")
         return
 
     if isinstance(result, dict) and result.get("type") == "needs_disambiguation":
@@ -1197,8 +1199,16 @@ async def telegram_test(request: Request):
 # ── Main webhook ──────────────────────────────────────────────────────────────
 
 @router.post("/webhook")
+@limiter.limit("120/minute")
 async def telegram_webhook(request: Request):
     """Receive and route Telegram Bot API updates."""
+    # Verify the secret token Telegram sends in X-Telegram-Bot-Api-Secret-Token
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if webhook_secret:
+        incoming = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not secrets.compare_digest(incoming, webhook_secret):
+            return JSONResponse({"ok": False}, status_code=403)
+
     try:
         body = await request.json()
     except Exception:
@@ -1236,10 +1246,6 @@ async def telegram_webhook(request: Request):
         access_token  = (profile or {}).get("google_access_token")
         refresh_token = (profile or {}).get("google_refresh_token")
         user_timezone = (profile or {}).get("timezone") or "UTC"
-
-        # Silently drop callbacks from free/expired users (no spam)
-        if not _is_pro_plan((profile or {}).get("plan") or "free"):
-            return JSONResponse({"ok": True})
 
         conv = _conv.get(chat_id, {})
         intent  = conv.get("intent", {})
@@ -1431,7 +1437,7 @@ async def telegram_webhook(request: Request):
                     await _send_long(chat_id, _format_nl_result(result, user_timezone))
                 except Exception as e:
                     _sessions.pop(chat_id, None)
-                    await send_message(chat_id, f"❌ Command failed: {str(e)[:300]}")
+                    await send_message(chat_id, "❌ Command failed. Please try again.")
 
         # ── flow: continue / cancel (off-topic warning response) ─────────────
         elif cq_data == "flow:continue":
@@ -1559,7 +1565,7 @@ async def telegram_webhook(request: Request):
         supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
         url = (
             f"{supabase_url}/rest/v1/telegram_connections"
-            f"?verification_code=eq.{code}&verified_at=is.null&select=user_id"
+            f"?verification_code=eq.{code}&verified_at=is.null&select=user_id,updated_at"
         )
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url, headers=_sb_headers())
@@ -1567,6 +1573,17 @@ async def telegram_webhook(request: Request):
         if not rows:
             await send_message(chat_id, "❌ Invalid or expired code. Generate a fresh one from your dashboard.")
             return JSONResponse({"ok": True})
+        # Enforce 15-minute TTL on verification codes
+        updated_at_str = rows[0].get("updated_at") or ""
+        if updated_at_str:
+            try:
+                from datetime import timedelta
+                issued_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+                if datetime.now(tz.utc) - issued_at > timedelta(minutes=15):
+                    await send_message(chat_id, "❌ This code has expired. Generate a fresh one from your dashboard.")
+                    return JSONResponse({"ok": True})
+            except Exception:
+                pass  # If parsing fails, allow the code through
         user_id = rows[0]["user_id"]
         await _set_connection(user_id, {
             "chat_id": chat_id, "username": username,
@@ -1606,35 +1623,6 @@ async def telegram_webhook(request: Request):
         await send_message(chat_id, "❌ Cancelled.")
         return JSONResponse({"ok": True})
 
-    # ── Plan gate — block free/expired users from all Telegram features ───────
-    user_plan = (profile or {}).get("plan") or "free"
-    if not _is_pro_plan(user_plan):
-        # /status is the one exception: always allowed on any plan
-        if command == "status":
-            await send_message(
-                chat_id,
-                "📊 <b>Your account</b>\n\n"
-                "Plan: Free\n"
-                "Telegram: Requires Pro plan\n\n"
-                "👉 Upgrade: https://workspace-flow.vercel.app",
-            )
-            return JSONResponse({"ok": True})
-        # All other messages/commands: warn once per hour, then stay silent
-        now = datetime.now(tz.utc)
-        last_warned = _plan_warning_sent.get(chat_id)
-        if last_warned is None or (now - last_warned).total_seconds() > 3600:
-            _plan_warning_sent[chat_id] = now
-            await send_message(
-                chat_id,
-                "⚠️ Your Pro trial has ended.\n\n"
-                "To continue using WorkspaceFlow on Telegram, upgrade to Pro:\n"
-                "👉 https://workspace-flow.vercel.app/dashboard/settings\n\n"
-                "Your account is still active — upgrade anytime to resume.",
-            )
-        return JSONResponse({"ok": True})
-
-    # ── Conversation state machine (non-slash replies) ────────────────────────
-    # Every step handles free text first — buttons are shortcuts, not walls.
     if not is_command and chat_id in _conv:
         state   = _conv[chat_id]["state"]
         intent  = _conv[chat_id]["intent"]
@@ -1977,7 +1965,7 @@ async def telegram_webhook(request: Request):
             briefing = await generate_briefing_summary(raw_data)
             if not isinstance(briefing, dict) or "schedule" not in briefing:
                 raise ValueError("Unexpected briefing format")
-            await _send_long(chat_id, format_briefing_telegram(briefing))
+            await _send_long(chat_id, format_briefing_telegram(briefing, raw_data))
         except Exception:
             logger.exception("[Telegram] Briefing failed for chat_id=%s", chat_id)
             await send_message(chat_id, "⚠️ Something went wrong. Please try again.")
