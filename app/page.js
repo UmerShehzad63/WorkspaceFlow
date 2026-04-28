@@ -35,9 +35,6 @@ export default function LandingPage() {
               <Link href="/login" className="btn btn-primary btn-lg">
                 Open Automation Dashboard
               </Link>
-              <Link href="#briefing-preview" className="btn btn-secondary btn-lg">
-                See Workflow Preview
-              </Link>
             </div>
             <p className={`${styles.heroNote} animate-in animate-in-delay-4`}>
               Built for operators, assistants, founders, and busy teams running inside Google Workspace

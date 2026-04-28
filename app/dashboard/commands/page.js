@@ -161,7 +161,6 @@ export default function CommandsPage() {
       <div className="page-header">
         <h1>Command Bar</h1>
         <p>Type what you want in natural language. We&apos;ll handle the rest.</p>
-        )}
       </div>
 
       {/* Input */}

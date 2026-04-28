@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-[#f5f5f5] text-[#1a1a1a] font-sans antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-3xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-black/5;
+  }
+  
+  .btn-primary {
+    @apply bg-black text-white px-6 py-3 rounded-full font-medium transition-all hover:bg-black/80 active:scale-95 disabled:opacity-50;
+  }
+  
+  .btn-secondary {
+    @apply bg-white text-black border border-black/10 px-6 py-3 rounded-full font-medium transition-all hover:bg-black/5 active:scale-95 disabled:opacity-50;
+  }
+}
+
+@theme {
+  --font-headline: "Manrope", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-label: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-primary: #001857;
+  --color-secondary: #5644d0;
+  --color-surface: #faf9f5;
+  --color-surface-container: #efeeea;
+  --color-surface-container-low: #f5f4f0;
+  --color-surface-container-high: #e9e8e4;
+  --color-on-surface-variant: #454650;
+}
+
+@layer base {
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@700;800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500&family=JetBrains+Mono:wght@400;700&display=swap');
+
+  body {
+    @apply bg-surface text-primary font-body selection:bg-secondary/30;
+  }
+}
+
+@layer utilities {
+  .midnight-shadow {
+    box-shadow: 0 12px 32px -8px rgba(27, 47, 110, 0.12);
+  }
+  
+  .glass-header {
+    background-color: rgba(250, 249, 245, 0.7);
+    backdrop-filter: blur(20px);
+  }
+}
